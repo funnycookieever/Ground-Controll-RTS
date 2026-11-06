@@ -706,8 +706,8 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     }
 
     /// <summary>
-    /// Every land airbase on the map is in play in the mod's missions. The mission file already says
-    /// so for the bases it lists; this catches any it does not (a map update adding a field, or a
+    /// Every land airbase on the map is in play in the mod's missions. Bases the mission file lists
+    /// keep their authored Disabled / Capturable flags; this only opens the ones it does not (a map update adding a field, or a
     /// base whose prefab default is closed). Ship decks stay as they are: the base game never lets
     /// an airbase attached to a unit be captured. Same two writes as the game's ModifyAirbaseOutcome.
     /// </summary>
@@ -718,6 +718,7 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
             if (airbase == null
                 || airbase.SavedAirbase == null
                 || airbase.TryGetAttachedUnit(out _)
+                || airbase.SavedAirbaseOverride // the mission authored this base: respect Disabled / Capturable
                 || (airbase.SavedAirbase.Capturable && !airbase.disabled))
             {
                 continue;
