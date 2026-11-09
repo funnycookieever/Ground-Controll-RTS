@@ -497,7 +497,20 @@ internal sealed class CommanderSupplyHeliUi
             ShowLz,
             new GUIContent("SHOW LZ", "Marks every active drop zone in the 3D view."),
             CommanderUiTheme.Toggle);
-        return y + 46f;
+        y += 46f;
+
+        // Only the helicopter autopilot is road-routed; a plane flies its Air Command route.
+        if (!aircraft.Rotary)
+        {
+            return y;
+        }
+
+        service.FollowRoads = CommanderUiTheme.Check(
+            new Rect(12f, y, width, 28f),
+            service.FollowRoads,
+            new GUIContent("Follow roads on long legs", "Off: a helicopter flies the straight line to the LZ, over whatever is in the way."),
+            CommanderUiTheme.Toggle);
+        return y + 36f;
     }
 
     /// <summary>Step four. A WAIT field queues the run until a hangar there is free.</summary>

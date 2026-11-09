@@ -39,7 +39,8 @@ internal static class CommanderHeloRoadRoute
             || aircraft.Player != null
             || aircraft.pilots == null
             || aircraft.pilots.Length == 0
-            || aircraft.pilots[0].currentState is not (AIHeloCombatState or AIHeloTransportState))
+            || aircraft.pilots[0].currentState is not (AIHeloCombatState or AIHeloTransportState)
+            || !CommanderSupplyHeliService.FollowsRoads(aircraft))
         {
             return;
         }

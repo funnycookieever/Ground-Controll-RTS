@@ -9,6 +9,15 @@ namespace GroundControlRts;
 
 internal sealed partial class CommanderSupplyHeliService
 {
+    /// <summary>False for a cargo run launched with "Follow roads" off.</summary>
+    internal static bool FollowsRoads(Aircraft aircraft)
+    {
+        return Instance == null
+            || !Instance.assignedMissions.TryGetValue(aircraft, out CargoMission mission)
+            || !mission.TargetOverrideActive
+            || mission.FollowRoads;
+    }
+
     private static int GetSamSiteId(string supportSummary)
     {
         int siteId = ParseFoundationSiteId(supportSummary);
@@ -730,7 +739,8 @@ internal sealed partial class CommanderSupplyHeliService
         bool useAirdrop,
         string supportSummary,
         bool useOtherAirfields,
-        IReadOnlyList<GlobalPosition> targets)
+        IReadOnlyList<GlobalPosition> targets,
+        bool followRoads = true)
     {
         if (CommanderNetwork.IsGuest)
         {
@@ -743,7 +753,8 @@ internal sealed partial class CommanderSupplyHeliService
                 terrainClearanceMeters,
                 useAirdrop,
                 useOtherAirfields,
-                targets);
+                targets,
+                followRoads);
             return;
         }
 
@@ -770,7 +781,8 @@ internal sealed partial class CommanderSupplyHeliService
             useAirdrop,
             supportSummary,
             useOtherAirfields,
-            targets);
+            targets,
+            followRoads);
         Airbase? spawnAirbase = ResolveSpawnAirbase(request, hq!);
         if (spawnAirbase == null
             || pendingAircraftSpawn != null
@@ -867,7 +879,8 @@ internal sealed partial class CommanderSupplyHeliService
         float terrainClearanceMeters,
         bool useAirdrop,
         bool useOtherAirfields,
-        IReadOnlyList<GlobalPosition> targets)
+        IReadOnlyList<GlobalPosition> targets,
+        bool followRoads)
     {
         string[] keys = new string[cargoLoadout.weapons.Count];
         for (int i = 0; i < keys.Length; i++)
@@ -885,6 +898,7 @@ internal sealed partial class CommanderSupplyHeliService
             CommanderNetwork.Num(terrainClearanceMeters),
             CommanderNetwork.Flag(useAirdrop),
             CommanderNetwork.Flag(useOtherAirfields),
+            CommanderNetwork.Flag(followRoads),
         };
         for (int i = 0; i < targets.Count; i++)
         {
@@ -946,7 +960,7 @@ internal sealed partial class CommanderSupplyHeliService
         }
 
         List<GlobalPosition> targets = new();
-        for (int i = 9; i < args.Length; i++)
+        for (int i = 10; i < args.Length; i++)
         {
             if (CommanderNetwork.TryPosition(args, i, out GlobalPosition target))
             {
@@ -969,7 +983,8 @@ internal sealed partial class CommanderSupplyHeliService
             CommanderNetwork.Bool(args, 7),
             string.Empty,
             CommanderNetwork.Bool(args, 8),
-            targets);
+            targets,
+            CommanderNetwork.Bool(args, 9));
     }
 
     private bool IsSamHelipadBusy(QueuedCargoSpawn request)
@@ -1057,7 +1072,8 @@ internal sealed partial class CommanderSupplyHeliService
             purchased,
             purchased ? CommanderEconomyService.PriceOf(aircraftOption.Definition) : 0f,
             request.Targets,
-            Time.unscaledTime + PendingSpawnTimeoutSeconds);
+            Time.unscaledTime + PendingSpawnTimeoutSeconds,
+            followRoads: request.FollowRoads);
 
         AircraftDefinition definition = aircraftOption.Definition;
         int liveryIndex = definition.aircraftParameters.GetRandomLiveryForFaction(hq.faction);
@@ -1121,7 +1137,8 @@ internal sealed partial class CommanderSupplyHeliService
             ParseFoundationSiteId(pending.SupportSummary),
             ParseJacknifeSiteId(pending.SupportSummary),
             pending.OriginAirbase,
-            pending.NavalTarget);
+            pending.NavalTarget,
+            pending.FollowRoads);
         assignedMissions[aircraft] = mission;
         int cachedRouteSiteId = mission.DepositSiteId >= 0
             ? mission.DepositSiteId
@@ -1915,7 +1932,8 @@ internal sealed partial class CommanderSupplyHeliService
             float terrainClearanceMeters,
             bool airdrop,
             string supportSummary,
-            bool useOtherAirfields)
+            bool useOtherAirfields,
+            bool followRoads = true)
         {
             Aircraft = aircraft;
             Loadout = loadout;
@@ -1926,7 +1944,10 @@ internal sealed partial class CommanderSupplyHeliService
             Airdrop = airdrop;
             SupportSummary = supportSummary;
             UseOtherAirfields = useOtherAirfields;
+            FollowRoads = followRoads;
         }
+
+        internal bool FollowRoads { get; }
 
         internal CargoAircraftOption Aircraft { get; }
 
@@ -1968,8 +1989,10 @@ internal sealed partial class CommanderSupplyHeliService
             bool airdrop,
             string supportSummary,
             bool useOtherAirfields,
-            IReadOnlyList<GlobalPosition> targets)
+            IReadOnlyList<GlobalPosition> targets,
+            bool followRoads)
         {
+            FollowRoads = followRoads;
             Aircraft = aircraft;
             Loadout = loadout;
             CargoLabel = cargoLabel;
@@ -2006,6 +2029,8 @@ internal sealed partial class CommanderSupplyHeliService
 
         internal List<GlobalPosition> Targets { get; }
 
+        internal bool FollowRoads { get; }
+
         internal GlobalPosition Target => Targets[0];
     }
 
@@ -2025,8 +2050,10 @@ internal sealed partial class CommanderSupplyHeliService
             float purchaseCost,
             IReadOnlyList<GlobalPosition> targets,
             float expiresAt,
-            Ship? navalTarget = null)
+            Ship? navalTarget = null,
+            bool followRoads = true)
         {
+            FollowRoads = followRoads;
             Hq = hq;
             Definition = definition;
             OriginAirbase = originAirbase;
@@ -2070,6 +2097,8 @@ internal sealed partial class CommanderSupplyHeliService
         internal float ExpiresAt { get; }
 
         internal Ship? NavalTarget { get; }
+
+        internal bool FollowRoads { get; }
     }
 
     private sealed class CargoMission
@@ -2089,8 +2118,10 @@ internal sealed partial class CommanderSupplyHeliService
             int foundationSiteId,
             int jacknifeSiteId,
             Airbase originAirbase,
-            Ship? navalTarget = null)
+            Ship? navalTarget = null,
+            bool followRoads = true)
         {
+            FollowRoads = followRoads;
             Hq = hq;
             DeliveryTargets = new List<GlobalPosition>(deliveryTargets);
             CargoLabel = cargoLabel;
@@ -2229,5 +2260,7 @@ internal sealed partial class CommanderSupplyHeliService
         internal int RejectedTouchdowns { get; set; }
 
         internal bool HoverUnload { get; set; }
+
+        internal bool FollowRoads { get; }
     }
 }

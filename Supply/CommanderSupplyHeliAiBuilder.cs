@@ -104,7 +104,8 @@ internal sealed partial class CommanderSupplyHeliService
             selection.Airdrop,
             selection.SupportSummary,
             selection.UseOtherAirfields,
-            selection.Targets);
+            selection.Targets,
+            selection.FollowRoads);
         return "launched with " + selection.CargoLabel;
     }
 }

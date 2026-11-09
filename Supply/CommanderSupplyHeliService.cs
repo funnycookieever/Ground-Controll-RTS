@@ -149,6 +149,9 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
 
     internal bool UseOtherAirfields { get; set; } = true;
 
+    /// <summary>Off: the helicopter skips <see cref="CommanderHeloRoadRoute"/> and flies straight.</summary>
+    internal bool FollowRoads { get; set; } = true;
+
     internal bool SelectedCargoSupportsAirdrop => SelectedAircraft != null
         && SelectedAircraft.CargoSlots.Exists(slot => slot.SelectedMount != null)
         && SelectedAircraft.CargoSlots.TrueForAll(slot => slot.SelectedMount == null || CargoMountSupportsAirdrop(slot.SelectedMount));
@@ -241,6 +244,7 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
         IncludeCountermeasures = true;
         FillRemainingHardpoints = false;
         UseOtherAirfields = true;
+        FollowRoads = true;
         nextAirbaseRefreshAt = CommanderScheduler.Stagger("supply.airbases", 1f, 0.5f);
         nextMissionPruneAt = CommanderScheduler.Stagger("supply.prune", 2f, 0.8f);
         statusText = string.Empty;
@@ -702,7 +706,8 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
             terrainClearanceMeters,
             airdrop,
             supportSummary,
-            UseOtherAirfields);
+            UseOtherAirfields,
+            FollowRoads);
         SetStatus(pendingTargetSelection.GetTargetPrompt());
     }
 
@@ -1013,7 +1018,8 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
             selection.Airdrop,
             selection.SupportSummary,
             selection.UseOtherAirfields,
-            selection.Targets);
+            selection.Targets,
+            selection.FollowRoads);
         if (repeatSelection)
         {
             selection.Targets.Clear();
