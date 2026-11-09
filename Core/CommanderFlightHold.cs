@@ -16,9 +16,13 @@ internal static class CommanderFlightHold
     private const float HoldLookAheadMeters = 5000f;
     private const float HoldBankDegrees = 45f;
 
+    /// <summary>Floor on the terrain-follow height, so a low entry is not flown at treetop level.</summary>
+    private const float MinHoldHeightAboveGround = 150f;
+
     private static Aircraft? held;
     private static GlobalPosition holdPoint;
     private static Vector3 holdHeading;
+    private static float holdHeightAboveGround;
 
     [HarmonyPrefix]
     [HarmonyPatch(nameof(PilotPlayerState.UpdateState))]
@@ -60,6 +64,7 @@ internal static class CommanderFlightHold
         {
             held = aircraft;
             holdPoint = aircraft.GlobalPosition();
+            holdHeightAboveGround = Mathf.Max(aircraft.radarAlt, MinHoldHeightAboveGround);
             Vector3 forward = aircraft.cockpit.xform.forward;
             holdHeading = new Vector3(forward.x, 0f, forward.z).normalized;
             if (holdHeading == Vector3.zero)
@@ -93,6 +98,9 @@ internal static class CommanderFlightHold
             holdPoint.y,
             here.z + (holdHeading.z * HoldLookAheadMeters));
         inputs.throttle = Mathf.Max(inputs.throttle, aircraft.GetAircraftParameters().cruiseThrottle);
-        aircraft.autopilot.AutoAim(ahead, true, false, false, 1f, HoldBankDegrees, false, 0f, Vector3.zero);
+
+        // Without followTerrain AutoAim flies dead level and only nudges up at the last moment, so
+        // rising ground took the aircraft. Following terrain holds the height above ground it opened at.
+        aircraft.autopilot.AutoAim(ahead, true, false, false, 1f, HoldBankDegrees, true, holdHeightAboveGround, Vector3.zero);
     }
 }
