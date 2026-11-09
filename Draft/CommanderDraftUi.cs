@@ -140,8 +140,12 @@ internal sealed class CommanderDraftUi
             Visible = true;
         }
 
-        float width = Mathf.Min(1140f, CommanderUiScale.Width - 32f);
-        float height = Mathf.Min(740f, CommanderUiScale.Height - 32f);
+        Vector2 size = CommanderWindowScale.Size(
+            WindowId,
+            new Vector2(Mathf.Min(1140f, CommanderUiScale.Width - 32f), Mathf.Min(740f, CommanderUiScale.Height - 32f)),
+            new Vector2(600f, 400f));
+        float width = size.x;
+        float height = size.y;
         if (!positioned)
         {
             windowRect = new Rect((CommanderUiScale.Width - width) * 0.5f, (CommanderUiScale.Height - height) * 0.5f, width, height);

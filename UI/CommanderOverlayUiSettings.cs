@@ -180,7 +180,7 @@ internal sealed partial class CommanderOverlayUi
         }
 
         // Game speed moved here from the command bar, to keep the bar short.
-        DrawSpeedButtons(settingsWindowRect.width - 72f - ((TopBarSpeedWidth + 2f) * 3f), 3f, 22f);
+        DrawSpeedButtons(settingsWindowRect.width - 126f - ((TopBarSpeedWidth + 2f) * 3f), 3f, 22f);
 
         float tabWidth = (settingsWindowRect.width - 30f) / 6f;
         DrawSettingsTab(new Rect(12f, y, tabWidth, 32f), "GAMEPLAY", 0);
@@ -217,7 +217,7 @@ internal sealed partial class CommanderOverlayUi
         }
 
         CommanderUiTheme.DrawTooltip(new Rect(0f, 0f, settingsWindowRect.width, settingsWindowRect.height));
-        GUI.DragWindow(new Rect(0f, 0f, settingsWindowRect.width - 72f - ((TopBarSpeedWidth + 2f) * 3f), 28f));
+        GUI.DragWindow(new Rect(0f, 0f, settingsWindowRect.width - 126f - ((TopBarSpeedWidth + 2f) * 3f), 28f));
     }
 
     /// <summary>
@@ -365,8 +365,6 @@ internal sealed partial class CommanderOverlayUi
             ? "OFF (THIS MATCH ONLY)"
             : enemyMode != CommanderEnemyCommanderService.ModeOff
             ? CommanderEnemyCommanderService.GetModeLabel(enemyMode)
-            : CommanderEnemyCommanderService.IsMultiplayerMatch && CommanderEnemyCommanderService.IsDuelMission
-            ? "OFF IN MULTIPLAYER"
             : "OFF ON THIS MISSION";
         int teamsLeftToPlayers = enemyMode > 0 ? CommanderEnemyCommanderService.CountTeamsLeftToPlayers() : 0;
         string buttonLabel = $"ENEMY COMMANDER: {enemyLabel}"

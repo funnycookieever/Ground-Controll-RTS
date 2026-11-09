@@ -76,6 +76,7 @@ internal static class CommanderDepotLane
         foreach (PersistentID id in hq.factionUnits)
         {
             if (!id.TryGetUnit(out Unit unit) || unit is not GroundVehicle vehicle || vehicle.disabled
+                || CommanderMobileEmplacementService.IsReservedHauler(vehicle)
                 || (vehicle.rb != null && vehicle.rb.velocity.sqrMagnitude > StoppedSpeed * StoppedSpeed))
             {
                 continue;
@@ -152,6 +153,29 @@ internal static class CommanderDepotLane
         }
     }
 
+    /// <summary>Host, at spawn: sets a trailer down beside the exit lane, clear of the ones already there.</summary>
+    internal static void ParkTrailer(VehicleDepot depot, GroundVehicle trailer)
+    {
+        if (!CommanderSpawnService.TryFindClearVerge(depot, 60f, out GlobalPosition origin, out Vector3 verge, out float clear))
+        {
+            return;
+        }
+
+        // Down the verge from its far end, one trailer length at a time, till a spot is free.
+        GlobalPosition spot = origin + (verge * clear);
+        for (float meters = clear; meters >= 0f; meters -= 12f)
+        {
+            spot = CommanderGameAccess.SnapToTerrain(origin + (verge * meters));
+            if (!IsVehicleNear(spot, trailer))
+            {
+                break;
+            }
+        }
+
+        CommanderGameAccess.TeleportGroundVehicle(trailer, spot);
+        CommanderRepairService.Instance?.SetHome(trailer, spot);
+    }
+
     private static void FreeStuckAt(VehicleDepot depot, BuildingDefinition definition, CommanderBuildPreview preview)
     {
         Vector3 half = preview.GetFootprint(definition);
@@ -225,12 +249,12 @@ internal static class CommanderDepotLane
         return false;
     }
 
-    private static bool IsVehicleNear(GlobalPosition spot)
+    private static bool IsVehicleNear(GlobalPosition spot, Unit? except = null)
     {
         int hits = Physics.OverlapSphereNonAlloc(spot.ToLocalPosition(), RescueClearMeters, RescueHits, ~0, QueryTriggerInteraction.Ignore);
         for (int i = 0; i < hits; i++)
         {
-            if (RescueHits[i] != null && RescueHits[i].GetComponentInParent<Unit>() is GroundVehicle)
+            if (RescueHits[i] != null && RescueHits[i].GetComponentInParent<Unit>() is GroundVehicle vehicle && vehicle != except)
             {
                 return true;
             }

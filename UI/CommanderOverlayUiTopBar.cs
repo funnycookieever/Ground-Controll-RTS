@@ -15,7 +15,7 @@ internal sealed partial class CommanderOverlayUi
 {
     private const float TopBarHeight = 40f;
     private const float TopBarTabWidth = 92f;
-    private const float TopBarFundsWidth = 214f;
+    private const float TopBarFundsWidth = 244f;
     private const float TopBarSpeedWidth = 40f;
 
     private static readonly AccessTools.FieldRef<MessageUI, TextMeshProUGUI> KillFeedText =
@@ -23,6 +23,9 @@ internal sealed partial class CommanderOverlayUi
 
     private static readonly Vector3[] KillFeedCorners = new Vector3[4];
     private static GUIStyle? killFeedStyle;
+
+    /// <summary>The income figure on one line: wrapped, "-$2.75m/min" broke before its last letter.</summary>
+    private static GUIStyle? incomeStyle;
 
     private Rect topBarRect;
     private Rect topBarHintRect;
@@ -44,8 +47,6 @@ internal sealed partial class CommanderOverlayUi
             ? "Click the cargo destination in the world or on the map. Right-click cancels."
         : airCommandService.AwaitingAreaSelection
             ? "Click the mission area on the tactical map or in the world. Right-click cancels."
-        : mobileEmplacementService.AwaitingDestination
-            ? "Click the trailer destination in the world. Right-click cancels."
         : spawnService.AwaitingRallyPointSelection
             ? "Click where the depot's new units should gather, in the world or on the map. Right-click cancels."
         : CommanderAreaFire.AwaitingTarget
@@ -132,7 +133,10 @@ internal sealed partial class CommanderOverlayUi
         {
             GUI.Label(new Rect(x, topBarRect.y, 60f, TopBarHeight - 2f), "FUNDS", CommanderUiTheme.Caption);
             GUI.Label(new Rect(x + 50f, topBarRect.y, 100f, TopBarHeight - 2f), CommanderSpawnService.GetFactionFundsLabel(), CommanderUiTheme.Figure);
-            GUI.Label(new Rect(x + 146f, topBarRect.y, TopBarFundsWidth - 146f, TopBarHeight - 2f), GetIncomeLabel(), CommanderUiTheme.MutedLabel);
+            string income = GetIncomeLabel();
+            incomeStyle ??= new GUIStyle(CommanderUiTheme.MutedLabel) { wordWrap = false, clipping = TextClipping.Clip };
+            GUI.Label(new Rect(x + 146f, topBarRect.y, TopBarFundsWidth - 146f, TopBarHeight - 2f), income, incomeStyle);
+            DrawIncomeTick(new Rect(x + 146f, topBarRect.yMax - 8f, Mathf.Min(incomeStyle.CalcSize(new GUIContent(income)).x, TopBarFundsWidth - 146f), 2f));
             x += TopBarFundsWidth;
             DrawTopBarDivider(x);
             x += 12f;
@@ -346,6 +350,34 @@ internal sealed partial class CommanderOverlayUi
         }
 
         return topBarReserve;
+    }
+
+    /// <summary>A hairline under the income figure that fills toward the next payout, then flashes
+    /// as the money lands. Nothing is drawn where this machine does not run the income clock.</summary>
+    private void DrawIncomeTick(Rect rect)
+    {
+        float progress = economyService.IncomeTickProgress;
+        if (progress < 0f || topBarIncome == "no income")
+        {
+            return;
+        }
+
+        Color previous = GUI.color;
+        Color accent = CommanderUiTheme.Accent;
+        GUI.color = new Color(accent.r, accent.g, accent.b, 0.18f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+
+        // The first half second after a payout the whole line flashes bright and fades.
+        float flash = progress < 0.035f ? 1f - (progress / 0.035f) : 0f;
+        GUI.color = new Color(accent.r, accent.g, accent.b, 0.75f);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, Mathf.Round(rect.width * progress), rect.height), Texture2D.whiteTexture);
+        if (flash > 0f)
+        {
+            GUI.color = new Color(accent.r, accent.g, accent.b, flash);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        }
+
+        GUI.color = previous;
     }
 
     private string GetIncomeLabel()

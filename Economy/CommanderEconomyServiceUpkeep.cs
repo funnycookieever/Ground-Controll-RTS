@@ -163,7 +163,7 @@ internal sealed partial class CommanderEconomyService
         System.Array.Clear(ledgerIncomeCount, 0, ledgerIncomeCount.Length);
         System.Array.Clear(ledgerIncomeLevels, 0, ledgerIncomeLevels.Length);
         System.Array.Clear(ledgerIncome, 0, ledgerIncome.Length);
-        ledgerGross = 0f;
+        ledgerGross = GetBaseIncomePerMinute();
         ledgerUpkeep = 0f;
         LedgerDearestUpkeep = 0f;
         LedgerDearestLabel = string.Empty;

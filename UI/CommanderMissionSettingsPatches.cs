@@ -23,8 +23,9 @@ namespace GroundControlRts;
 /// in their place at their size. Like the game's own tabs it edits the mission being customised:
 /// each value is a mission tag (<see cref="CommanderMapSettings"/>, the same ones the mission editor
 /// writes), so it starts at what the map's maker set and rides in the copy the match is played from.
-/// A mission with no tag for an option shows the config's value. The ban list and the unit prices
-/// are the host's own and stay in the config.
+/// A mission with no tag for an option shows the config's value. The ban list is the host's own and
+/// stays in the config; so are the unit prices, unless the map carries its own (set in the editor),
+/// which the match then plays and this page edits on the copy.
 /// The enemy commander's OFF is not offered: it lasts one match and the scene change into the
 /// mission resets it, so it stays in Settings > Gameplay.
 /// </remarks>
@@ -345,7 +346,7 @@ internal static class CommanderMissionSettingsPatches
 
         if (addUnitButton != null)
         {
-            AddPricesButton(refreshers, bases, boxTemplate, addUnitButton);
+            AddPricesButton(__instance, refreshers, bases, boxTemplate, addUnitButton);
         }
 
         AddPageButton(closeButton, page, pageSize, rowLayout, tabs);
@@ -355,7 +356,7 @@ internal static class CommanderMissionSettingsPatches
     /// Opens UNIT PRICES, the economy profile editor. It lives here, before the match, because a
     /// match's prices are fixed once it starts. The label names the profile the next match will use.
     /// </summary>
-    private static void AddPricesButton(List<Action> refreshers, Transform column, Transform boxTemplate, Button buttonTemplate)
+    private static void AddPricesButton(CustomizeMissionMenu menu, List<Action> refreshers, Transform column, Transform boxTemplate, Button buttonTemplate)
     {
         Transform box = AddBox(column, boxTemplate);
         box.name = "GroundControl Prices";
@@ -369,13 +370,27 @@ internal static class CommanderMissionSettingsPatches
             if (label != null)
             {
                 int changes = CommanderPriceProfile.ChangeCount(CommanderPriceProfile.Active);
-                label.text = CommanderPriceProfile.IsStandard
+                string? map = CommanderPriceProfile.DescribeMission(Edited(menu));
+                label.text = map != null ? $"Unit Prices: Map's {map}"
+                    : CommanderPriceProfile.IsStandard
                     ? "Unit Prices: Standard"
                     : $"Unit Prices: {CommanderPriceProfile.ProfileName} ({changes})";
             }
         }
 
-        button.onClick.AddListener(() => CommanderPriceEditorUi.Open(Refresh));
+        button.onClick.AddListener(() =>
+        {
+            // A map with its own prices plays them, so those are what this match's copy edits.
+            Mission? mission = Edited(menu);
+            if (mission != null && CommanderPriceProfile.DescribeMission(mission) != null)
+            {
+                CommanderPriceProfile.EditMission(mission, Refresh);
+            }
+            else
+            {
+                CommanderPriceEditorUi.Open(Refresh);
+            }
+        });
         refreshers.Add(Refresh);
     }
 
@@ -504,23 +519,32 @@ internal static class CommanderMissionSettingsPatches
 
         Slider slider = row.GetComponent<Slider>();
         slider.onValueChanged = new Slider.SliderEvent();
-        slider.wholeNumbers = true;
+
+        // Free-moving like the game's own sliders; only the stored value is rounded. Whole-number
+        // snapping made the handle jump step to step across the short bar.
+        slider.wholeNumbers = false;
         slider.minValue = min;
         slider.maxValue = max;
-        void Show()
+        void Label(int value)
         {
-            int value = Mathf.Clamp(read(), min, max);
-            slider.SetValueWithoutNotify(value);
             if (valueText != null)
             {
                 valueText.text = format(value);
             }
         }
 
+        void Show()
+        {
+            int value = Mathf.Clamp(read(), min, max);
+            slider.SetValueWithoutNotify(value);
+            Label(value);
+        }
+
         slider.onValueChanged.AddListener(value =>
         {
-            write(Mathf.RoundToInt(value));
-            Show();
+            int rounded = Mathf.Clamp(Mathf.RoundToInt(value), min, max);
+            write(rounded);
+            Label(rounded);
         });
         refreshers.Add(Show);
     }

@@ -412,7 +412,7 @@
         }
       ],
       "startingBalance": 550.0,
-      "playerJoinAllowance": 60.0,
+      "playerJoinAllowance": 9.931189,
       "playerTaxRate": 0.25,
       "regularIncome": 3.0,
       "excessFundsDistributePercent": 0.25,
@@ -510,7 +510,7 @@
         }
       ],
       "startingBalance": 550.0,
-      "playerJoinAllowance": 60.0,
+      "playerJoinAllowance": 9.931189,
       "playerTaxRate": 0.25,
       "regularIncome": 3.0,
       "excessFundsDistributePercent": 0.25,

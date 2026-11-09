@@ -40,10 +40,12 @@ internal sealed partial class CommanderAirCommandService
     /// <summary>
     /// Past the touchdown point, an approach goes round when the runway left is less than this
     /// many metres of glide per metre of height (3.4 degrees) plus a rollout. A fixed margin sent a
-    /// Brawler round at 28 m with 1080 m of Sandrift's runway left.
+    /// Brawler round at 28 m with 1080 m of Sandrift's runway left, and 17 + 600 m sent every
+    /// Compass round at Boscali's 834 m strip (31 m up, 767 m left). The rollout brake assist stops
+    /// a landing-speed jet in about 300 m, so a late touchdown is fine.
     /// </summary>
-    private const float GlideRunPerMeter = 17f;
-    private const float RolloutNeedMeters = 600f;
+    private const float GlideRunPerMeter = 12f;
+    private const float RolloutNeedMeters = 300f;
 
     /// <summary>Below the flare height, coming down faster than this is a go-around, not a flare.</summary>
     private const float GoAroundSinkRate = 12f;
@@ -84,6 +86,9 @@ internal sealed partial class CommanderAirCommandService
     /// would stop (<see cref="FindAircraftOnRunway"/>); the rollout brakes for anything left ahead.
     /// </summary>
     private const float InTrailFinalMeters = 2000f;
+
+    /// <summary>A lone lander flies its landing speed from this far (beyond 500 m) out from touchdown; further out the game's faster approach, less this.</summary>
+    private const float ApproachSlowMeters = 4000f;
 
     /// <summary>How long a runway's traffic scan is reused.</summary>
     private const float RunwayTrafficSeconds = 0.5f;
@@ -647,7 +652,8 @@ internal sealed partial class CommanderAirCommandService
     /// Prefix on <c>FinalTurn</c> and <c>StabilizedApproach</c>, after the frame markers: a lander
     /// with another ahead of it on the same final flies its landing speed, not the game's
     /// <c>landing speed + 0.015 x (distance - 500)</c>. That term made a follower 3 km back 45 m/s
-    /// faster than the one ahead, and two Compasses cleared in trail at Dustbowl flared 6 s apart. Undone in <see cref="EndApproachFrame"/>.
+    /// faster than the one ahead, and two Compasses cleared in trail at Dustbowl flared 6 s apart.
+    /// A lone lander gets the term trimmed by <see cref="ApproachSlowMeters"/>. Undone in <see cref="EndApproachFrame"/>.
     /// </summary>
     internal static void HoldInTrailSpeed(AIPilotLandingState state, bool checkMode)
     {
@@ -659,16 +665,15 @@ internal sealed partial class CommanderAirCommandService
             return;
         }
 
+        // Alone on final, still slow to landing speed by the last ApproachSlowMeters: the game's term
+        // brought Compasses over Boscali's threshold at 95 m/s against 66, 30 m high, every time.
         RunwayTraffic traffic = GetTraffic(usage.Runway);
-        if (!HasLanderAhead(traffic.Finals, aircraft, usage) && !HasLanderAhead(traffic.Rolling, aircraft, usage))
-        {
-            return;
-        }
-
+        bool inTrail = HasLanderAhead(traffic.Finals, aircraft, usage) || HasLanderAhead(traffic.Rolling, aircraft, usage);
         float distance = FastMath.Distance(usage.GetTouchdownPoint(), aircraft.GlobalPosition());
+        float excess = Mathf.Max(distance - 500f, 0f);
         trailState = state;
         trailSpeed = LandingSpeedRef(state);
-        LandingSpeedRef(state) = trailSpeed - (0.015f * Mathf.Max(distance - 500f, 0f));
+        LandingSpeedRef(state) = trailSpeed - (0.015f * (inTrail ? excess : Mathf.Min(excess, ApproachSlowMeters)));
     }
 
     internal static void EndApproachFrame()

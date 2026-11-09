@@ -84,8 +84,12 @@ internal sealed class CommanderUnitListUi
             return;
         }
 
-        float width = Mathf.Min(520f, CommanderUiScale.Width - 24f);
-        float height = Mathf.Min(620f, CommanderUiScale.Height - 24f);
+        Vector2 size = CommanderWindowScale.Size(
+            WindowId,
+            new Vector2(Mathf.Min(520f, CommanderUiScale.Width - 24f), Mathf.Min(620f, CommanderUiScale.Height - 24f)),
+            new Vector2(340f, 260f));
+        float width = size.x;
+        float height = size.y;
         if (!positionInitialized)
         {
             windowRect = new Rect(Mathf.Max(12f, 486f), Mathf.Max(12f, (CommanderUiScale.Height * 0.5f) - (height * 0.5f)), width, height);

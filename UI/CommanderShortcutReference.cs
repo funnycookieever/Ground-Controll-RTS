@@ -135,7 +135,7 @@ internal static class CommanderShortcutReference
         buffer.Add(new Entry(
             "Cancel placement",
             Key(CommanderSettings.SecondaryAction),
-            "Backs out of an armed build, supply, area or trailer placement. Escape also works."));
+            "Backs out of an armed build, supply or area placement. Escape also works."));
         buffer.Add(new Entry(
             "Set depot rally point",
             Key(CommanderSettings.SecondaryAction),

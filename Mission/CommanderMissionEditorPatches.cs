@@ -18,7 +18,7 @@ namespace GroundControlRts;
 /// dock, enrichment plant and a factory for every ground unit, aircraft and ship) beside Aircraft, Vehicles and
 /// Buildings, and a Ground Control RTS section at the bottom of Mission Settings: the toggle that
 /// turns the full mod on for the map, the map's own rules, and every GC RTS Settings option of
-/// Customize Mission, saved with the map.
+/// Customize Mission, saved with the map, and the map's own unit prices.
 /// </summary>
 /// <remarks>
 /// Both are copies of the panel's own controls, so they look like the base game's. Nothing is stored
@@ -278,6 +278,27 @@ internal static class CommanderMissionEditorPatches
 
         Toggle objectives = AddToggleRow(___respawnToggle, ref last, "Win by objectives only", on => Write(m => CommanderMapSettings.SetTag(m, CommanderMapSettings.ObjectivesWinTag, on)));
         MapRows.Add(m => objectives.SetIsOnWithoutNotify(CommanderMapSettings.HasTag(m, CommanderMapSettings.ObjectivesWinTag)));
+
+        // Ticked when the map carries its own prices; a click opens UNIT PRICES on them.
+        Toggle prices = AddToggleRow(___respawnToggle, ref last, "Unit prices", _ =>
+        {
+            Mission? mission = MissionManager.CurrentMission;
+            if (mission != null)
+            {
+                RefreshRows(mission);
+                CommanderPriceProfile.EditMission(mission, () => RefreshRows(mission));
+            }
+        });
+        TextMeshProUGUI[] priceLabels = last.GetComponentsInChildren<TextMeshProUGUI>(true);
+        MapRows.Add(m =>
+        {
+            string? map = CommanderPriceProfile.DescribeMission(m);
+            prices.SetIsOnWithoutNotify(map != null);
+            foreach (TextMeshProUGUI label in priceLabels)
+            {
+                label.text = map != null ? "Unit prices: " + map : "Unit prices: Standard (click to edit)";
+            }
+        });
         if (___startingRankSlider == null)
         {
             CommanderPlugin.Log.LogWarning("The editor's Mission Settings have changed shape; the GC RTS sliders were not added.");
@@ -293,6 +314,7 @@ internal static class CommanderMissionEditorPatches
         Row("Starting builders", CommanderMapSettings.BuildersPrefix, string.Empty, CommanderMapSettings.MaxBuilders + 1, i => i, i => Number(i), CommanderMapSettings.DefaultBuilders);
         Row("AI head start", CommanderMapSettings.HeadStartPrefix, "%", 11, i => i * 50, i => Number(i * 50) + "%", CommanderMapSettings.DefaultHeadStartPercent / 50);
         Row("AI income per minute", CommanderMapSettings.AiIncomePrefix, string.Empty, 21, i => i * 25, i => Number(i * 25), 0);
+        Row("Base income per minute", CommanderMapSettings.BaseIncomePrefix, string.Empty, 41, i => i * 25, i => Number(i * 25), 0);
 
         // Customize Mission's GC RTS Settings page, in its order, at the mod's defaults.
         Row("AI Commanders", CommanderMapSettings.AiCommandersPrefix, string.Empty, CommanderEnemyCommanderService.AiCommandersBoth + 1, i => i, CommanderMissionSettingsPatches.AiCommandersLabel, CommanderEnemyCommanderService.AiCommandersEnemy);

@@ -59,8 +59,9 @@ internal sealed class CommanderAlertUi
         }
 
         CommanderUiTheme.Ensure();
-        float width = Mathf.Min(WindowWidth, CommanderUiScale.Width - 24f);
-        float height = TitleHeight + 6f + MeasureToasts(width);
+        Vector2 min = new(260f, 80f);
+        float width = CommanderWindowScale.Size(WindowId, new Vector2(Mathf.Min(WindowWidth, CommanderUiScale.Width - 24f), 0f), min).x;
+        float height = CommanderWindowScale.Size(WindowId, new Vector2(width, TitleHeight + 6f + MeasureToasts(width)), min).y;
         if (!positionInitialized)
         {
             // Centred under the command bar: the tactical map owns the top-right corner.

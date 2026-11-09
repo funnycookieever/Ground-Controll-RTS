@@ -477,8 +477,7 @@ internal sealed partial class CommanderAirCommandUi
 
     private bool ShowsModeToggle()
     {
-        return service.SelectedMode == CommanderAirCommandService.AirCommandMode.AirGuard
-            || CommanderAirCommandService.UsesSaturationAttack(service.SelectedMode);
+        return service.SelectedMode == CommanderAirCommandService.AirCommandMode.AirGuard;
     }
 
     /// <summary>
@@ -662,17 +661,6 @@ internal sealed partial class CommanderAirCommandUi
                 new Rect(12f, y, width, 32f),
                 CommanderAirCommandService.TargetOrdnance,
                 "TARGET ORDNANCE | include hostile missiles",
-                CommanderUiTheme.Toggle);
-            GUI.enabled = oldEnabled;
-            y += 38f;
-        }
-        else if (CommanderAirCommandService.UsesSaturationAttack(service.SelectedMode))
-        {
-            GUI.enabled = oldEnabled && interactive;
-            CommanderAirCommandService.SaturationAttack = CommanderUiTheme.Check(
-                new Rect(12f, y, width, 32f),
-                CommanderAirCommandService.SaturationAttack,
-                "SATURATION ATTACK | fire every anti-radiation missile at once",
                 CommanderUiTheme.Toggle);
             GUI.enabled = oldEnabled;
             y += 38f;

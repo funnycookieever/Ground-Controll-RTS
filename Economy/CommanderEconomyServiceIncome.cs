@@ -386,7 +386,7 @@ internal sealed partial class CommanderEconomyService
     /// <summary>What this faction's income buildings pay a minute, before the AI multiplier.</summary>
     private float GetIncomePerMinute(FactionHQ hq)
     {
-        float income = 0f;
+        float income = GetBaseIncomePerMinute();
         foreach (KeyValuePair<Unit, int> entry in incomeLevels)
         {
             if (entry.Key != null && !entry.Key.disabled && entry.Key.NetworkHQ == hq)

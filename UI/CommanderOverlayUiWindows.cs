@@ -222,12 +222,14 @@ internal sealed partial class CommanderOverlayUi
                 ? "Build defenses from stored supply. Logistics routes from nearby airbases are planned once from terrain and faction influence, then reused. Show Route displays the selected cached route. Automatic deliveries prefer safer viable routes."
                 : CommanderRadarService.IsRadarGuidedLauncher(focusedUnit)
                 ? "A radar-guided launcher is aimed by a fire-control truck within 300 m, and that truck needs a radar within 300 m of itself - any radar vehicle or radar station on the base counts. Without both it tracks nothing and never fires."
-                : CommanderMobileEmplacementService.IsMoveableTrailer(focusedUnit)
-                    ? "Relocate this static trailer with an idle HLT/MSV Tractor or Flatbed within 300 m. The hauler is reserved during loading, travel and deployment."
+                : CommanderMobileEmplacementService.IsMoveableTrailer(focusedUnit) || CommanderMobileEmplacementService.IsTowingHauler(focusedUnit)
+                    ? "HITCH TO HAULER sends the nearest idle HLT/MSV Tractor or Flatbed within 300 m to hitch this trailer. Once hitched, move the hauler with normal orders; DROP TRAILER sets the trailer down where it is."
                 : CommanderRepairService.IsRepairUnit(focusedUnit)
                     ? "Basegame repair targeting weighs damage, structure value and distance. NEAREST REPAIR instead targets the closest damaged friendly repairable structure on each Basegame repair scan. AFTER BUILD: STAY keeps a builder where its build finished instead of driving back to its post."
                 : focusedUnit is Ship
                     ? "Request a paid Basegame UH-90K naval-supply run for this ship. Purchased airframes are refunded after a successful return. Enemy ships cannot request supply."
+                : CommanderMoveService.IsIrSam(focusedUnit)
+                    ? "TARGETS: MISSILES ONLY keeps this IR SAM's launchers and guns for incoming missiles. Aircraft and ground units are ignored, so its ammunition is saved for defending the base."
                 : string.Empty;
             y = 32f + 6f + CommanderUiTheme.DrawHelpOverlay(
                 new Rect(10f, 32f, radarWindowRect.width - 20f, 108f),
@@ -286,6 +288,24 @@ internal sealed partial class CommanderOverlayUi
             y += 42f;
         }
 
+        if (CommanderMoveService.IsIrSam(focusedUnit) && CommanderMoveService.Instance is { } moves)
+        {
+            GUI.enabled = oldEnabled && friendly;
+            bool missileOnly = CommanderMoveService.IsMissileOnly(focusedUnit);
+            if (GUI.Button(
+                new Rect(12f, y, radarWindowRect.width - 24f, 36f),
+                new GUIContent(
+                    missileOnly ? "TARGETS: MISSILES ONLY" : "TARGETS: ALL",
+                    "MISSILES ONLY ignores aircraft and ground units and shoots only at incoming missiles."),
+                missileOnly ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+            {
+                moves.ToggleMissileOnly(focusedUnit);
+            }
+
+            GUI.enabled = oldEnabled;
+            y += 40f;
+        }
+
         if (focusedUnit is Ship ship)
         {
             GUI.enabled = oldEnabled && friendly;
@@ -302,19 +322,28 @@ internal sealed partial class CommanderOverlayUi
             GUI.Label(new Rect(12f, y, radarWindowRect.width - 24f, 38f), supplyHeliService.StatusText, CommanderUiTheme.MutedLabel);
             y += 42f;
         }
-        else if (CommanderMobileEmplacementService.IsMoveableTrailer(focusedUnit))
+        else if (CommanderMobileEmplacementService.IsMoveableTrailer(focusedUnit) || CommanderMobileEmplacementService.IsTowingHauler(focusedUnit))
         {
-            const string relocationRequirement = "Idle Tractor or Flatbed required within 300 m.";
-            bool relocating = mobileEmplacementService.IsRelocating(focusedUnit);
-            bool haulerAvailable = mobileEmplacementService.HasAvailableHauler(focusedUnit);
-            Rect relocateButtonRect = new(12f, y, radarWindowRect.width - 24f, 36f);
-            GUI.enabled = oldEnabled && friendly && !relocating && haulerAvailable;
-            if (GUI.Button(
-                relocateButtonRect,
-                new GUIContent(relocating ? "RELOCATION ACTIVE" : "RELOCATE TRAILER", relocationRequirement),
-                CommanderUiTheme.PrimaryButton))
+            Rect hitchButtonRect = new(12f, y, radarWindowRect.width - 24f, 36f);
+            bool inJob = mobileEmplacementService.IsInTowJob(focusedUnit, out bool towing);
+            if (towing)
             {
-                mobileEmplacementService.BeginRelocation();
+                GUI.enabled = oldEnabled && friendly;
+                if (GUI.Button(hitchButtonRect, "DROP TRAILER", CommanderUiTheme.PrimaryButton))
+                {
+                    mobileEmplacementService.DropTrailer(focusedUnit);
+                }
+            }
+            else
+            {
+                GUI.enabled = oldEnabled && friendly && !inJob && mobileEmplacementService.HasAvailableHauler(focusedUnit);
+                if (GUI.Button(
+                    hitchButtonRect,
+                    new GUIContent(inJob ? "HITCHING..." : "HITCH TO HAULER", "Idle Tractor or Flatbed required within 300 m."),
+                    CommanderUiTheme.PrimaryButton))
+                {
+                    mobileEmplacementService.BeginHitch();
+                }
             }
 
             GUI.enabled = oldEnabled;
@@ -580,6 +609,8 @@ internal sealed partial class CommanderOverlayUi
             || CommanderRadarService.IsRadarGuidedLauncher(unit)
             || CommanderRepairService.IsRepairUnit(unit)
             || CommanderMobileEmplacementService.IsMoveableTrailer(unit)
+            || CommanderMobileEmplacementService.IsTowingHauler(unit)
+            || CommanderMoveService.IsIrSam(unit)
             || samSiteService.IsConstructionCore(unit);
     }
 

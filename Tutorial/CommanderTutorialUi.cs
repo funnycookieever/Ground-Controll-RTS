@@ -60,9 +60,10 @@ internal sealed class CommanderTutorialUi
             return;
         }
 
-        bodyHeight = CommanderUiTheme.RowHeight(CommanderUiTheme.Label, WindowWidth - (Pad * 2f), tutorial.Body, 40f);
-        windowRect.width = WindowWidth;
-        windowRect.height = TitleHeight + 8f + 26f + bodyHeight + 10f + 32f + Pad;
+        Vector2 min = new(300f, 150f);
+        float width = CommanderWindowScale.Size(WindowId, new Vector2(WindowWidth, 0f), min).x;
+        bodyHeight = CommanderUiTheme.RowHeight(CommanderUiTheme.Label, width - (Pad * 2f), tutorial.Body, 40f);
+        windowRect.size = CommanderWindowScale.Size(WindowId, new Vector2(width, TitleHeight + 8f + 26f + bodyHeight + 10f + 32f + Pad), min);
         windowRect = CommanderWindowScale.Clamp(WindowId, windowRect);
         string title = tutorial.Finished
             ? "TUTORIAL"

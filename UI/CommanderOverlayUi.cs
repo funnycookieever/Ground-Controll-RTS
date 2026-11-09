@@ -324,6 +324,10 @@ internal sealed partial class CommanderOverlayUi : ICommanderActivate, ICommande
             settingsWindowRect.height = Mathf.Min(890f, CommanderUiScale.Height - 24f);
         }
 
+        panelRect.size = CommanderWindowScale.Size(WindowId, new Vector2(420f, panelRect.height), new Vector2(320f, 200f));
+        baseSupplyWindowRect.size = CommanderWindowScale.Size(BaseSupplyWindowId, new Vector2(460f, Mathf.Min(420f, CommanderUiScale.Height - 24f)), new Vector2(340f, 220f));
+        pinnedWindowRect.size = CommanderWindowScale.Size(PinnedWindowId, new Vector2(342f, 340f), new Vector2(240f, 160f));
+        settingsWindowRect.size = CommanderWindowScale.Size(SettingsWindowId, settingsWindowRect.size, new Vector2(480f, 360f));
         panelRect = CommanderWindowScale.Clamp(WindowId, panelRect);
         baseSupplyWindowRect = CommanderWindowScale.Clamp(BaseSupplyWindowId, baseSupplyWindowRect);
         pinnedWindowRect = CommanderWindowScale.Clamp(PinnedWindowId, pinnedWindowRect);
@@ -340,6 +344,7 @@ internal sealed partial class CommanderOverlayUi : ICommanderActivate, ICommande
         radarWindowRect.height = Mathf.Min(
             samSiteFocused ? 734f : radarContentHeight,
             CommanderUiScale.Height - 64f);
+        radarWindowRect.size = CommanderWindowScale.Size(RadarWindowId, radarWindowRect.size, new Vector2(300f, 200f));
         radarWindowRect = CommanderWindowScale.Clamp(RadarWindowId, radarWindowRect);
 
         // A mixed selection grows the bar upward to fit the per-type chip row; a single unit grows

@@ -319,9 +319,8 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     internal static bool IsMultiplayerMatch => GameManager.gameState == GameState.Multiplayer;
 
     /// <summary>
-    /// The mode actually in force. On wherever AI Commanders puts one: the mod's own missions in
-    /// singleplayer, or every mission and multiplayer too past the listed ones; else off, since the
-    /// other side is a person. It stays off for the whole match, even while that person is disconnected.
+    /// The mode actually in force. On wherever AI Commanders puts one, singleplayer or hosted: the
+    /// mod's own missions, or every mission past the listed ones; off only where it is set to Off.
     /// Champions is the exception: its enemy side is <c>preventJoin</c> and is always locked to
     /// MISSION FUNDS, singleplayer or hosted, since the authored balance is the difficulty.
     /// <see cref="OffThisMatch"/> overrides it until the next scene change.
@@ -342,10 +341,10 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
                 return ModeOff;
             }
 
-            // AI Commanders decides whether there is one; AI COMMANDERS past the listed missions is
-            // the host asking for an opponent, so it answers in multiplayer too. The mode setting
-            // only picks its funding (the retired AUTO, 0, plays as MATCHED).
-            bool present = !OffThisMatch && IsDuelMission && (!IsMultiplayerMatch || CommandersEverywhere || IsTeamDuelPveMission);
+            // AI Commanders decides whether there is one, singleplayer and multiplayer alike: anything
+            // but Off is on. Teams with players stay theirs (IsAiFaction). The mode setting only picks
+            // its funding (the retired AUTO, 0, plays as MATCHED).
+            bool present = !OffThisMatch && IsDuelMission;
             return !present ? ModeOff : CommanderSettings.EnemyCommanderMode == ModeMission ? ModeMission : ModeMatched;
         }
     }

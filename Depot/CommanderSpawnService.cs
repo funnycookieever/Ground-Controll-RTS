@@ -400,8 +400,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
         for (int i = 0; i < factionVehicleDefinitions.Count; i++)
         {
             string category = CommanderGameAccess.GetVehicleCategoryLabel(factionVehicleDefinitions[i]);
-            if (!string.Equals(category, "Trailer", StringComparison.Ordinal)
-                && !factionCategories.Contains(category))
+            if (!factionCategories.Contains(category))
             {
                 factionCategories.Add(category);
             }
@@ -1500,11 +1499,6 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
         {
             VehicleDefinition definition = vehicleDefinitions[i];
             string category = CommanderGameAccess.GetVehicleCategoryLabel(definition);
-            if (string.Equals(category, "Trailer", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
             if (!definitionsByCategory.TryGetValue(category, out List<VehicleDefinition> definitions))
             {
                 definitions = new List<VehicleDefinition>();

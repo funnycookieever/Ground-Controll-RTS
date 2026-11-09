@@ -66,6 +66,9 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
     private readonly Dictionary<Unit, GlobalPosition> playerDestinations = new();
     private readonly Dictionary<Unit, UnitOrder> orders = new();
     private readonly Dictionary<Unit, CommanderStance> stances = new();
+
+    /// <summary>IR SAMs told to shoot only at missiles, leaving aircraft and ground units alone.</summary>
+    private readonly HashSet<Unit> missileOnlyUnits = new();
     private readonly List<Unit> staleOrders = new();
     private readonly List<Unit> hostiles = new();
     private readonly List<Unit> staleStances = new();
@@ -78,6 +81,7 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         this.selectionService = selectionService;
         Instance = this;
         CommanderNetwork.OnHost("stance", HostStance);
+        CommanderNetwork.OnHost("missileonly", HostMissileOnly);
         CommanderNetwork.OnHost("dest", HostDestinations);
         CommanderNetwork.OnHost("fire", CommanderFireNow.HostFire);
         CommanderNetwork.OnHost("areafire", CommanderAreaFire.HostAreaFire);
@@ -236,6 +240,7 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
     {
         orders.Clear();
         stances.Clear();
+        missileOnlyUnits.Clear();
         stoppedUnits.Clear();
         playerDestinations.Clear();
         hostiles.Clear();
@@ -253,6 +258,17 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
             && Instance != null
             && Instance.stances.TryGetValue(unit, out CommanderStance stance)
             && stance == CommanderStance.HoldFire;
+    }
+
+    internal static bool IsIrSam(Unit? unit)
+    {
+        return unit?.definition is VehicleDefinition { vehicleType: VehicleType.IR_SAM };
+    }
+
+    /// <summary>True when the unit's turrets may only take missiles as targets.</summary>
+    internal static bool IsMissileOnly(Unit? unit)
+    {
+        return unit != null && Instance != null && Instance.missileOnlyUnits.Contains(unit);
     }
 
     /// <summary>True when <paramref name="candidate"/> is the unit that <paramref name="shooter"/> was ordered to attack.</summary>
@@ -668,6 +684,18 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         {
             CommanderNetwork.Forward("stance", request.ToArray());
         }
+    }
+
+    internal void ToggleMissileOnly(Unit unit)
+    {
+        bool enabled = !missileOnlyUnits.Remove(unit);
+        if (enabled)
+        {
+            missileOnlyUnits.Add(unit);
+        }
+
+        // Turret targeting runs on the host; a guest's toggle is only a label without this.
+        CommanderNetwork.Forward("missileonly", CommanderNetwork.Id(unit), CommanderNetwork.Flag(enabled));
     }
 
     internal void CycleSelectionStance()
@@ -2193,6 +2221,23 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         {
             stoppedUnits.Remove(unit);
             CommanderGameAccess.SetUnitHoldPosition(unit, false);
+        }
+    }
+
+    private void HostMissileOnly(FactionHQ hq, string[] args)
+    {
+        if (!CommanderNetwork.TryUnit(args, 1, out Unit unit) || !ReferenceEquals(unit.NetworkHQ, hq))
+        {
+            return;
+        }
+
+        if (CommanderNetwork.Bool(args, 2))
+        {
+            missileOnlyUnits.Add(unit);
+        }
+        else
+        {
+            missileOnlyUnits.Remove(unit);
         }
     }
 

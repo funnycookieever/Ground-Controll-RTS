@@ -534,6 +534,10 @@ internal sealed class CommanderSamSiteAnalyzerUi
 
     private void EnsurePosition()
     {
+        windowRect.size = CommanderWindowScale.Size(
+            WindowId,
+            new Vector2(Mathf.Min(560f, CommanderUiScale.Width - 24f), Mathf.Min(650f, CommanderUiScale.Height - 24f)),
+            new Vector2(420f, 320f));
         if (positionInitialized)
         {
             return;

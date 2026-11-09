@@ -225,6 +225,17 @@ internal sealed partial class CommanderEconomyService
     /// <summary>What a new factory may be told to build: the faction's ground vehicles, then every aircraft.</summary>
     internal IReadOnlyList<UnitDefinition> ProductionOptions => productionOptions;
 
+    /// <summary>0..1 toward the next income payout, or -1 when the clock is not running here
+    /// (a guest, whose host pays the income).</summary>
+    internal float IncomeTickProgress
+    {
+        get
+        {
+            float remaining = nextIncomeAt - Time.time;
+            return remaining < -1f || remaining > IncomeIntervalSeconds ? -1f : 1f - Mathf.Clamp01(remaining / IncomeIntervalSeconds);
+        }
+    }
+
     /// <summary>The building the armed placement would put down, whichever button armed it.</summary>
     private BuildingDefinition? PendingDefinition => PendingBuild switch
     {
@@ -1270,6 +1281,30 @@ internal sealed partial class CommanderEconomyService
         }
     }
 
+    /// <summary>The map's base income: every side is paid it like an income building it does not have.</summary>
+    private static void PayBaseIncome()
+    {
+        float perMinute = GetBaseIncomePerMinute();
+        if (perMinute <= 0f)
+        {
+            return;
+        }
+
+        foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
+        {
+            if (hq != null && hq.IsServer)
+            {
+                hq.AddFunds(perMinute * IncomeIntervalSeconds / 60f);
+            }
+        }
+    }
+
+    /// <summary>The map's base income a minute, with the income multiplier buildings pay under.</summary>
+    private static float GetBaseIncomePerMinute()
+    {
+        return CommanderMapSettings.BaseIncomePerMinute * CommanderPriceProfile.IncomeMultiplier;
+    }
+
     /// <summary>
     /// Pays for one blueprint; repair vehicles do the building (CommanderEconomyServiceConstruction.cs).
     /// The host's own placement click and a guest's forwarded one both end here, so a guest builds
@@ -1397,6 +1432,7 @@ internal sealed partial class CommanderEconomyService
     {
         HoldFundsInTreasury();
         PayChampionsStipend();
+        PayBaseIncome();
         if (incomeLevels.Count == 0)
         {
             return;

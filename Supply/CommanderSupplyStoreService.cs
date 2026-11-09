@@ -1543,6 +1543,22 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         }
     }
 
+    /// <summary>A ship comes out of the dock with full fuel and ammunition shelves.</summary>
+    internal void FillNewStore(Unit store)
+    {
+        if (!IsSupplyStore(store))
+        {
+            return;
+        }
+
+        SetFuelKg(store, GetFuelCapacityKg(store));
+        Rearmer? rearmer = GetRearmer(store);
+        if (rearmer != null)
+        {
+            SetAmmoKg(store, rearmer, rearmer.GetMaxCapacity());
+        }
+    }
+
     /// <summary>The ammunition twin of <see cref="BuyAiFuel"/>.</summary>
     private static float BuyAiAmmo(FactionHQ hq, Unit store, Rearmer rearmer, float budget)
     {
@@ -1801,6 +1817,12 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         for (int i = 0; i < stores.Count; i++)
         {
             Unit store = stores[i];
+            if (store is Ship)
+            {
+                // A faction's first ship can be its first store; it sails out full, not on the opening shoestring.
+                continue;
+            }
+
             SetFuelKg(store, Mathf.Min(GetFuelKg(store), startFuel));
             Rearmer? rearmer = GetRearmer(store);
             if (rearmer != null && rearmer.Capacity > startAmmo)

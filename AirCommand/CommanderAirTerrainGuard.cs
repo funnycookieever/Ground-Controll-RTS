@@ -152,7 +152,9 @@ internal static class CommanderAirTerrainGuard
     /// Prefix on <c>Autopilot.Hover</c>. A transport's last 300 m hold a height over the landing
     /// point, not over the ground, so rising ground on the way in takes it nose first at 7 m/s,
     /// and stuck there more than 200 m short it is abandoned. Clears what lies under its path;
-    /// the last metres stay the game's own so it still touches down.
+    /// the last metres stay the game's own so it still touches down. Those metres are measured flat:
+    /// held up over a roof it was more than 30 m from the point in 3D even straight above it, the
+    /// guard never let go, and an Ibis hovered over a base it should have landed on and captured.
     /// </summary>
     internal static void ApplyTransportHover(Autopilot autopilot, ref GlobalPosition destination, ref float altitudeHold)
     {
@@ -163,7 +165,7 @@ internal static class CommanderAirTerrainGuard
             || aircraft.pilots == null
             || aircraft.pilots.Length == 0
             || aircraft.pilots[0].currentState is not AIHeloTransportState
-            || FastMath.InRange(destination, aircraft.GlobalPosition(), TransportFinalMeters))
+            || CommanderGameAccess.HorizontalDistance(destination.ToLocalPosition(), aircraft.transform.position) < TransportFinalMeters)
         {
             return;
         }

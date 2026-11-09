@@ -11,6 +11,9 @@ internal static class CommanderFactionVehiclePatches
     /// put nothing on screen, and a base that never fields anything reads as the AI ignoring it.</summary>
     private static readonly HashSet<VehicleDepot> LoggedRefusals = new();
 
+    /// <summary>The depot inside <c>TrySpawnVehicle</c>, for the <c>MoveFromDepot</c> it calls.</summary>
+    private static VehicleDepot? spawningDepot;
+
     [HarmonyPatch(typeof(FactionHQ), "DeployVehicles")]
     [HarmonyPrefix]
     private static void DeployVehiclesPrefix(FactionHQ __instance)
@@ -125,7 +128,22 @@ internal static class CommanderFactionVehiclePatches
         }
 
         warheadStore?.RemoveWarheads(CommanderFactionVehicleService.GetWarheadCost(vehicleDefinition));
+        spawningDepot = __instance;
         return true;
+    }
+
+    /// <summary>
+    /// A trailer cannot drive out of the door, so it sat in the lane until the stuck sweep moved it
+    /// to the side. It goes straight to the verge instead.
+    /// </summary>
+    [HarmonyPatch(typeof(GroundVehicle), nameof(GroundVehicle.MoveFromDepot))]
+    [HarmonyPostfix]
+    private static void MoveFromDepotPostfix(GroundVehicle __instance)
+    {
+        if (spawningDepot != null && CommanderGameAccess.IsTrailerVehicleDefinition(__instance.definition as VehicleDefinition))
+        {
+            CommanderDepotLane.ParkTrailer(spawningDepot, __instance);
+        }
     }
 
     /// <summary>
@@ -137,6 +155,7 @@ internal static class CommanderFactionVehiclePatches
     [HarmonyPostfix]
     private static void TrySpawnVehiclePostfix(VehicleDepot __instance, VehicleDefinition vehicleDefinition, bool __result)
     {
+        spawningDepot = null;
         FactionHQ? deploying = CommanderFactionVehicleService.AutomaticDeploymentHq;
 
         // Not in a both-sides match: there "the local team" is each AI in turn.

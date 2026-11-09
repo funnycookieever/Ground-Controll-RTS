@@ -458,6 +458,8 @@ internal sealed class CommanderNavalPurchaseService : ICommanderActivate, IComma
             return -1f;
         }
 
+        CommanderSupplyStoreService.Instance?.FillNewStore(ship);
+
         // A spaced slot rather than the point itself: every hull sent to one spot rammed the last.
         CommanderGameAccess.TrySetDestination(ship, FindRallySlot(definition, lanePoint, ship));
         if (fromReserve)
@@ -974,6 +976,8 @@ internal sealed class CommanderNavalPurchaseService : ICommanderActivate, IComma
             SetStatus("The ship could not be spawned. No funds were deducted.");
             return true;
         }
+
+        CommanderSupplyStoreService.Instance?.FillNewStore(ship);
 
         // Bought when it was queued: nothing more to take, from the reserve or the funds.
         bool fromReserve = !prepaid && GetReserve(hq, definition) > 0;

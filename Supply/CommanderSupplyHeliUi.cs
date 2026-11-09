@@ -10,7 +10,7 @@ namespace GroundControlRts;
 /// </summary>
 internal sealed class CommanderSupplyHeliUi
 {
-    private const int WindowId = 0x434F4D48;
+    internal const int WindowId = 0x434F4D48;
     private const float BayHeight = 46f;
     private const string HelpText = "Pick the aircraft, fill its bays, choose how it delivers and where it leaves from, then press "
         + "LAUNCH and click the point in the 3D world. A combined bay clears the front and rear bays it "
@@ -90,8 +90,12 @@ internal sealed class CommanderSupplyHeliUi
 
     internal void Tick()
     {
-        float width = Mathf.Min(760f, CommanderUiScale.Width - 32f);
-        float height = Mathf.Min(requiredHeight, (CommanderUiScale.Height - 60f) / CommanderWindowScale.Get(WindowId));
+        Vector2 size = CommanderWindowScale.Size(
+            WindowId,
+            new Vector2(Mathf.Min(760f, CommanderUiScale.Width - 32f), Mathf.Min(requiredHeight, (CommanderUiScale.Height - 60f) / CommanderWindowScale.Get(WindowId))),
+            new Vector2(480f, 300f));
+        float width = size.x;
+        float height = size.y;
         if (!positionInitialized)
         {
             windowRect = new Rect(12f, 52f, width, height);
@@ -176,7 +180,7 @@ internal sealed class CommanderSupplyHeliUi
         }
 
         if (OpenAirCommand != null
-            && GUI.Button(new Rect(windowRect.width - 172f, 3f, 104f, 22f), new GUIContent("< AIR COMMAND", "Back to buying combat aircraft."), CommanderUiTheme.ChromeButton))
+            && GUI.Button(new Rect(windowRect.width - 228f, 3f, 104f, 22f), new GUIContent("< AIR COMMAND", "Back to buying combat aircraft."), CommanderUiTheme.ChromeButton))
         {
             OpenAirCommand();
             return;
@@ -231,7 +235,7 @@ internal sealed class CommanderSupplyHeliUi
 
         GUI.EndScrollView();
         CommanderUiTheme.DrawTooltip(new Rect(0f, 0f, windowRect.width, windowRect.height));
-        GUI.DragWindow(new Rect(0f, 0f, windowRect.width - 180f, 28f));
+        GUI.DragWindow(new Rect(0f, 0f, windowRect.width - 236f, 28f));
     }
 
     /// <summary>

@@ -354,7 +354,8 @@ internal sealed class CommanderDepotUi
                 draft ? $"{CommanderFactionVehicleService.GetReserveCount(vehicle)} LEFT" : CommanderEconomyService.FundsLabel(CommanderFactionVehicleService.GetPurchaseCost(vehicle)),
                 draft ? string.Empty : $"T{tier}",
                 selected: false,
-                spawnService.IsLockedAtSelectedDepot(vehicle) ? $"DEPOT LEVEL {tier}" : null))
+                spawnService.IsLockedAtSelectedDepot(vehicle) ? $"DEPOT LEVEL {tier}" : null,
+                CommanderBuildTimes.Format(CommanderFactionVehicleService.GetReserveCount(vehicle) > 0 ? 0f : CommanderBuildTimes.For(vehicle))))
             {
                 detailDefinition = vehicles[i];
                 spawnService.QueueVehicle(vehicles[i]);

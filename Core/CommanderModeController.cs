@@ -206,7 +206,6 @@ internal sealed class CommanderModeController : MonoBehaviour
             moveService,
             tacticalMapService,
             supplyHeliService,
-            mobileEmplacementService,
             airCommandService,
             economyService,
             boxSelectService);

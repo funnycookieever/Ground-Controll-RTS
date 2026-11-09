@@ -409,7 +409,7 @@ internal static class CommanderUiTheme
     /// corner tag. <paramref name="lockText"/> dims the card and says why it cannot be had;
     /// <paramref name="selected"/> lights it. Returns true on a click anywhere on the card.
     /// </summary>
-    internal static bool DrawCard(Rect rect, UnitDefinition? definition, string title, string price, string corner, bool selected, string? lockText = null)
+    internal static bool DrawCard(Rect rect, UnitDefinition? definition, string title, string price, string corner, bool selected, string? lockText = null, string? buildTime = null)
     {
         Ensure();
         bool hovered = rect.Contains(Event.current.mousePosition) && GUI.enabled;
@@ -427,6 +427,14 @@ internal static class CommanderUiTheme
         if (corner.Length > 0)
         {
             GUI.Label(new Rect(rect.x + 7f, rect.y + 4f, rect.width - 14f, 16f), corner, Caption);
+        }
+
+        if (!string.IsNullOrEmpty(buildTime))
+        {
+            TextAnchor anchor = Caption.alignment;
+            Caption.alignment = TextAnchor.UpperRight;
+            GUI.Label(new Rect(rect.x + 7f, rect.y + 4f, rect.width - 14f, 16f), buildTime, Caption);
+            Caption.alignment = anchor;
         }
 
         FitLabel(new Rect(rect.x + 8f, rect.yMax - 40f, rect.width - 16f, 20f), title, Label);
@@ -639,6 +647,20 @@ internal static class CommanderUiTheme
         if (GUI.Button(new Rect(windowWidth - 62f, 3f, 26f, 22f), "?", visible ? SelectedButton : HelpButton))
         {
             visible = !visible;
+        }
+
+        int id = CommanderWindowScale.Current;
+        if (id != 0)
+        {
+            if (GUI.Button(new Rect(windowWidth - 118f, 3f, 26f, 22f), new GUIContent("-", "Zoom this window out."), HelpButton))
+            {
+                CommanderWindowScale.Step(id, -0.1f);
+            }
+
+            if (GUI.Button(new Rect(windowWidth - 90f, 3f, 26f, 22f), new GUIContent("+", "Zoom this window in."), HelpButton))
+            {
+                CommanderWindowScale.Step(id, 0.1f);
+            }
         }
 
         return visible;

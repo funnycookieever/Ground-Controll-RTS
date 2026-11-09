@@ -432,6 +432,33 @@ internal sealed partial class CommanderAirCommandService
         return free || usable == 0;
     }
 
+    /// <summary>An aircraft or vehicle on the deck within touching distance of a helipad. Anything
+    /// more than 10 m above or below the pad is flying over it or on another level.</summary>
+    internal static bool IsPadPhysicallyOccupied(Vector3 pad, Aircraft querier)
+    {
+        List<Unit> units = UnitRegistry.allUnits;
+        for (int i = 0; i < units.Count; i++)
+        {
+            Unit other = units[i];
+            if (other == null
+                || other.disabled
+                || ReferenceEquals(other, querier)
+                || other is not (Aircraft or GroundVehicle))
+            {
+                continue;
+            }
+
+            Vector3 offset = other.transform.position - pad;
+            float reach = querier.maxRadius + other.maxRadius + 3f;
+            if (Mathf.Abs(offset.y) < 10f && (offset.x * offset.x) + (offset.z * offset.z) < reach * reach)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Takes a stand out of the claims for good: no taxiway leads to it.</summary>
     internal static void MarkStandUnreachable(Transform stand)
     {

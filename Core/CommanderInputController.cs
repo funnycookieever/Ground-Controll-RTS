@@ -13,7 +13,6 @@ internal sealed class CommanderInputController
     private readonly CommanderMoveService moveService;
     private readonly CommanderTacticalMapService tacticalMapService;
     private readonly CommanderSupplyHeliService supplyHeliService;
-    private readonly CommanderMobileEmplacementService mobileEmplacementService;
     private readonly CommanderAirCommandService airCommandService;
     private readonly CommanderEconomyService economyService;
     private readonly CommanderBoxSelectService boxSelectService;
@@ -35,7 +34,6 @@ internal sealed class CommanderInputController
         CommanderMoveService moveService,
         CommanderTacticalMapService tacticalMapService,
         CommanderSupplyHeliService supplyHeliService,
-        CommanderMobileEmplacementService mobileEmplacementService,
         CommanderAirCommandService airCommandService,
         CommanderEconomyService economyService,
         CommanderBoxSelectService boxSelectService)
@@ -47,7 +45,6 @@ internal sealed class CommanderInputController
         this.moveService = moveService;
         this.tacticalMapService = tacticalMapService;
         this.supplyHeliService = supplyHeliService;
-        this.mobileEmplacementService = mobileEmplacementService;
         this.airCommandService = airCommandService;
         this.economyService = economyService;
         this.boxSelectService = boxSelectService;
@@ -298,7 +295,6 @@ internal sealed class CommanderInputController
     {
         return supplyHeliService.AwaitingTargetSelection
             || airCommandService.AwaitingAreaSelection
-            || mobileEmplacementService.AwaitingDestination
             || economyService.AwaitingPlacement
             || spawnService.AwaitingRallyPointSelection
             || CommanderNavalPurchaseService.Instance?.AwaitingRallySelection == true
@@ -319,7 +315,6 @@ internal sealed class CommanderInputController
         {
             supplyHeliService.CancelTargetSelection();
             airCommandService.CancelAreaSelection();
-            mobileEmplacementService.CancelDestinationSelection();
             economyService.CancelBuild();
             spawnService.CancelRallyPointSelection();
             CommanderNavalPurchaseService.Instance?.CancelRallySelection();
@@ -368,10 +363,6 @@ internal sealed class CommanderInputController
         else if (airCommandService.AwaitingAreaSelection)
         {
             airCommandService.TrySetAreaFromWorld(mousePosition);
-        }
-        else if (mobileEmplacementService.AwaitingDestination)
-        {
-            mobileEmplacementService.TrySetDestinationFromWorld(mousePosition);
         }
         else if (economyService.AwaitingPlacement)
         {

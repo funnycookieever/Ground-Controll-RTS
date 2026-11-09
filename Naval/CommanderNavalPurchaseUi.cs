@@ -318,7 +318,8 @@ internal sealed class CommanderNavalPurchaseUi
                 PriceLabel(ship),
                 $"T{CommanderNavalPurchaseService.GetRequiredDockLevel(ship)}",
                 ReferenceEquals(ship, selected),
-                LockText(ship, dockLevel)))
+                LockText(ship, dockLevel),
+                CommanderBuildTimes.Format(CommanderBuildTimes.For(ship))))
             {
                 service.SelectDefinition(i);
             }

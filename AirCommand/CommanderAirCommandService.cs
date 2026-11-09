@@ -84,7 +84,8 @@ internal sealed partial class CommanderAirCommandService : ICommanderActivate, I
 
     internal static bool TargetOrdnance { get => CommanderSettings.AirGuardTargetOrdnance; set => CommanderSettings.AirGuardTargetOrdnance = value; }
 
-    internal static bool SaturationAttack { get => CommanderSettings.AradSaturationAttack; set => CommanderSettings.AradSaturationAttack = value; }
+    // Saturation attack is retired: always off, no toggle.
+    internal static bool SaturationAttack => false;
 
     /// <summary>STANDBY is "no mission picked": the AIR window has no button for it.</summary>
     internal AirCommandMode SelectedMode { get; private set; } = AirCommandMode.Standby;

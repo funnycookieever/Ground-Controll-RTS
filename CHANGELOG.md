@@ -1,5 +1,29 @@
 ﻿# Changelog
 
+## 1.0.0.2
+
+### Added
+
+- IR SAMs have a TARGETS button: MISSILES ONLY makes them ignore aircraft and ground units and only shoot at incoming missiles.
+- Unit prices can be saved with a map. Set them from the mission editor or the mission settings, and everyone playing that map uses them.
+- New map setting: Base income per minute, paid to every side on top of normal income.
+- A small bar under the income in the top bar shows when the next payout comes.
+- Depot and naval cards show how long each unit takes to build.
+- More windows can be resized, and most windows have - and + buttons in the title bar to zoom them.
+
+### Changed
+
+- Moving trailers works like real towing now: HITCH TO HAULER sends a Tractor or Flatbed to hook up the trailer, you drive the hauler with normal orders, and DROP TRAILER sets it down again.
+- AI commanders are also available in multiplayer duels.
+- New ships and supply stores start full of fuel and ammo.
+- Aircraft landing alone slow down earlier on approach and need less runway, so they go round far less often.
+- The SATURATION ATTACK option for anti-radiation missiles is removed.
+
+### Fixed
+
+- Helicopter and VTOL pads count as taken when a unit is standing on them.
+- Destroyed supply stores no longer break warhead stockpiles.
+
 ## 1.0.0.1
 
 ### Changed

@@ -625,6 +625,21 @@ internal static class CommanderAirCommandPatches
         }
     }
 
+    /// <summary>
+    /// The base game's pad check only reads its landing queue and crossing runways, so a helicopter
+    /// set down on top of whatever was parked there. Anything standing on the pad counts too: the
+    /// pad search then prefers a free one, and <c>AIHeloLandingState</c> holds off while it waits.
+    /// </summary>
+    [HarmonyPatch(typeof(Airbase.VerticalLandingPoint), nameof(Airbase.VerticalLandingPoint.IsOccupied))]
+    [HarmonyPostfix]
+    private static void VerticalLandingPointIsOccupiedPostfix(Airbase.VerticalLandingPoint __instance, Aircraft querier, ref bool __result)
+    {
+        if (!__result && querier != null && __instance.point != null)
+        {
+            __result = CommanderAirCommandService.IsPadPhysicallyOccupied(__instance.point.position, querier);
+        }
+    }
+
     /// <summary>The taxi's hold short of a runway in use, with the same exception as the takeoff clearance.</summary>
     [HarmonyPatch(typeof(Airbase), nameof(Airbase.AircraftApproachingRunwayInUse))]
     [HarmonyPostfix]

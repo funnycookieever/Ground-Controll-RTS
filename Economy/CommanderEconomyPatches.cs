@@ -97,6 +97,27 @@ internal static class CommanderEconomyPatches
         __result = __instance.CurrentHQ.GetWarheadStockpile();
     }
 
+    /// <summary>
+    /// A destroyed munitions bunker never leaves <c>Airbase.stores</c> (nothing calls
+    /// <c>RemoveStorage</c>) and never comes back (<c>WarheadStorage.selfDisabled</c> is sticky, even
+    /// through <c>Repair</c>). <c>AddWarheadStockpile</c> still counts it as storage, so a base whose
+    /// bunkers are all dead scores lowest and wins every split, and <c>Airbase.AddWarheads</c> then
+    /// falls back to <c>stores[0]</c> - the dead bunker - where <c>GetWarheads</c> never counts it.
+    /// Every warhead after the first bunker kill vanished. Dropping dead stores first fixes both.
+    /// </summary>
+    [HarmonyPatch(typeof(FactionHQ), nameof(FactionHQ.AddWarheadStockpile))]
+    [HarmonyPrefix]
+    internal static void PruneDeadWarheadStoresPrefix(FactionHQ __instance)
+    {
+        foreach (Airbase airbase in __instance.GetAirbases())
+        {
+            if (airbase != null)
+            {
+                airbase.stores.RemoveAll(store => store == null || store.Disabled);
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(FactionHQ), nameof(FactionHQ.GetWarheadStockpile))]
     [HarmonyPatch(typeof(FactionHQ), nameof(FactionHQ.AddWarheadStockpile))]
     [HarmonyPrefix]

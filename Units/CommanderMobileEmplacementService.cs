@@ -1,24 +1,46 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using HarmonyLib;
 using NuclearOption.Networking;
 using UnityEngine;
 
 namespace GroundControlRts;
 
-internal sealed class CommanderMobileEmplacementService : ICommanderActivate, ICommanderDeactivate, ICommanderTickActive, ICommanderTickPersistent, ICommanderResetSession
+/// <summary>
+/// Hitches a static trailer to an idle tractor or flatbed. The hauler drives to the trailer and hitches
+/// it; from then on the player drives the hauler with ordinary move orders, the trailer following
+/// behind, until DROP TRAILER sets it down wherever it is.
+/// </summary>
+internal sealed class CommanderMobileEmplacementService : ICommanderActivate, ICommanderTickPersistent, ICommanderResetSession
 {
     private const float TractorRange = 300f;
     private const float ArrivalDistance = 12f;
     private const float StagingDistance = 18f;
-    private const float HandlingSeconds = 10f;
+    private const float HitchSeconds = 10f;
+
+    /// <summary>A stopped hauler this close hitches from where it stands; the trailer glides over.</summary>
+    private const float GlideRange = 60f;
+    private const float StallSeconds = 5f;
     private const float UpdateIntervalSeconds = 0.5f;
     private const float StatusDurationSeconds = 5f;
 
-    private readonly CommanderSelectionService selectionService;
-    private readonly List<RelocationJob> jobs = new();
-    private readonly HashSet<GroundVehicle> reservedHaulers = new();
+    // Hitch geometry, tuned by eye on the HLT Tractor; adjust here if a load sits wrong.
+    // A wheeled trailer's front box rides over the hauler's rear axles: this far forward of
+    // bumper-to-bumper, and lifted this much so the box clears the chassis.
+    private const float GooseneckOverlap = 3f;
+    private const float GooseneckLift = 1f;
 
-    private PendingRelocation? pendingRelocation;
+    // A wheelless container rides on the bed, its rear flush with the hauler's, this high up.
+    private const float BedHeight = 1.4f;
+
+    private static readonly FieldInfo? DeployablePartsField = AccessTools.Field(typeof(GroundVehicle), "deployableParts");
+    private static readonly FieldInfo? WheelsField = AccessTools.Field(typeof(GroundVehicle), "wheels");
+    private static readonly MethodInfo? DeployPartsMethod = AccessTools.Method(typeof(GroundVehicle), "DeployParts");
+
+    private readonly CommanderSelectionService selectionService;
+    private readonly List<TowJob> jobs = new();
+
     private float nextUpdateAt;
     private float statusUntil;
     private string statusText = string.Empty;
@@ -32,20 +54,18 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     {
         this.selectionService = selectionService;
         Instance = this;
-        CommanderNetwork.OnHost("emplace", HostRelocate);
+        CommanderNetwork.OnHost("emplace", HostHitch);
+        CommanderNetwork.OnHost("tow-drop", HostDrop);
     }
 
-    private enum RelocationStage
+    private enum TowStage
     {
         ApproachingPickup,
-        Loading,
-        Transporting,
-        Unloading,
+        Hitching,
+        Towing,
     }
 
     internal static CommanderMobileEmplacementService? Instance { get; private set; }
-
-    internal bool AwaitingDestination => pendingRelocation != null;
 
     internal string StatusText => Time.unscaledTime <= statusUntil ? statusText : string.Empty;
 
@@ -54,29 +74,13 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         nextUpdateAt = CommanderScheduler.Stagger("mobile-emplacements", UpdateIntervalSeconds, 0.2f);
     }
 
-    public void Deactivate()
-    {
-        pendingRelocation = null;
-        statusText = string.Empty;
-    }
-
     public void ResetSession()
     {
-        pendingRelocation = null;
         jobs.Clear();
-        reservedHaulers.Clear();
         statusText = string.Empty;
         availabilityTrailer = null;
         cachedHaulerAvailable = false;
         nextAvailabilityCheckAt = 0f;
-    }
-
-    public void TickActive()
-    {
-        if (CommanderGameInput.CancelDown)
-        {
-            CancelDestinationSelection();
-        }
     }
 
     public void TickPersistent()
@@ -88,38 +92,41 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
         for (int i = jobs.Count - 1; i >= 0; i--)
         {
-            RelocationJob job = jobs[i];
-            if (!UpdateJob(job))
+            if (UpdateJob(jobs[i]))
             {
-                continue;
+                jobs.RemoveAt(i);
             }
-
-            if (job.Tractor != null && !job.Tractor.disabled)
-            {
-                CommanderGameAccess.SetUnitHoldPosition(job.Tractor, hold: false);
-            }
-
-            reservedHaulers.Remove(job.Tractor!);
-            jobs.RemoveAt(i);
         }
     }
 
+    /// <summary>A hauler on its way to hitch: the player's move orders would pull it off the trailer.</summary>
     internal static bool IsReservedHauler(Unit? unit)
     {
-        return Instance != null
-            && unit is GroundVehicle vehicle
-            && Instance.reservedHaulers.Contains(vehicle);
+        return Instance?.FindJob(unit) is { Stage: not TowStage.Towing } job && ReferenceEquals(job.Tractor, unit);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="obstacle"/> is the trailer <paramref name="tractor"/> is hitching or
+    /// towing. Avoiding it would leave a tractor parked against it unable to pull up to it.
+    /// </summary>
+    internal static bool IsTowedBy(GroundVehicle tractor, Transform? obstacle)
+    {
+        return obstacle != null
+            && Instance?.FindJob(tractor) is { } job
+            && ReferenceEquals(job.Tractor, tractor)
+            && job.Trailer.transform == obstacle;
+    }
+
+    /// <summary>A hauler that is towing, so its systems window offers DROP TRAILER.</summary>
+    internal static bool IsTowingHauler(Unit? unit)
+    {
+        return Instance?.FindJob(unit) is { Stage: TowStage.Towing } job && ReferenceEquals(job.Tractor, unit);
     }
 
     internal static bool ShouldBlockDestination(UnitCommand command)
     {
         CommanderMobileEmplacementService? service = Instance;
-        if (service == null || service.issuingInternalHaulerCommand)
-        {
-            return false;
-        }
-
-        return IsReservedHauler(command.GetComponent<Unit>());
+        return service != null && !service.issuingInternalHaulerCommand && IsReservedHauler(command.GetComponent<Unit>());
     }
 
     internal static bool IsMoveableTrailer(Unit? unit)
@@ -129,28 +136,12 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             && CommanderGameAccess.IsTrailerVehicleDefinition(vehicle.definition as VehicleDefinition);
     }
 
-    internal void CancelDestinationSelection()
+    /// <summary>Whether the trailer or hauler is in a hitch job, and whether that job is already towing.</summary>
+    internal bool IsInTowJob(Unit? unit, out bool towing)
     {
-        if (!AwaitingDestination)
-        {
-            return;
-        }
-
-        pendingRelocation = null;
-        SetStatus("Trailer relocation cancelled.");
-    }
-
-    internal bool IsRelocating(Unit? trailer)
-    {
-        for (int i = 0; i < jobs.Count; i++)
-        {
-            if (ReferenceEquals(jobs[i].Trailer, trailer))
-            {
-                return true;
-            }
-        }
-
-        return pendingRelocation != null && ReferenceEquals(pendingRelocation.Trailer, trailer);
+        TowJob? job = FindJob(unit);
+        towing = job?.Stage == TowStage.Towing;
+        return job != null;
     }
 
     internal bool HasAvailableHauler(Unit? unit)
@@ -171,9 +162,9 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         return cachedHaulerAvailable;
     }
 
-    internal void BeginRelocation()
+    internal void BeginHitch()
     {
-        // The tractor is driven by the host; a guest's relocation is asked for when it clicks the spot.
+        // The tractor is driven by the host; a guest's hitch is asked for and the host picks the tractor.
         if (NetworkManagerNuclearOption.i == null
             || (!NetworkManagerNuclearOption.i.Server.Active && !CommanderNetwork.HostHasMod))
         {
@@ -188,9 +179,9 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             return;
         }
 
-        if (IsRelocating(trailer))
+        if (FindJob(trailer) != null)
         {
-            SetStatus("This trailer already has a relocation order.");
+            SetStatus("This trailer is already being hitched.");
             return;
         }
 
@@ -200,40 +191,37 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             return;
         }
 
-        pendingRelocation = new PendingRelocation(trailer, tractor);
         availabilityTrailer = null;
-        SetStatus("Click the new emplacement position in the 3D world. The game's Cancel binding cancels.");
+        if (CommanderNetwork.Forward("emplace", CommanderNetwork.Id(trailer)))
+        {
+            SetStatus("Hitching.");
+            return;
+        }
+
+        StartHitch(trailer, tractor);
     }
 
-    internal bool TrySetDestinationFromWorld(Vector2 screenPosition)
+    /// <summary>Sets the trailer down where it is; <paramref name="unit"/> is the trailer or its hauler.</summary>
+    internal void DropTrailer(Unit? unit)
     {
-        PendingRelocation? pending = pendingRelocation;
-        if (pending == null)
+        if (CommanderNetwork.Forward("tow-drop", CommanderNetwork.Id(unit)))
         {
-            return false;
+            SetStatus("Dropping trailer.");
+            return;
         }
 
-        if (!CommanderGameAccess.TryRaycastWorldPosition(screenPosition, out GlobalPosition destination))
+        if (FindJob(unit) is not { Stage: TowStage.Towing } job)
         {
-            SetStatus("No valid terrain position was found.");
-            return true;
+            return;
         }
 
-        pendingRelocation = null;
-        if (pending.Trailer == null || pending.Trailer.disabled || pending.Tractor == null || pending.Tractor.disabled)
-        {
-            SetStatus("The trailer or tractor is no longer available.");
-            return true;
-        }
-
-        if (CommanderNetwork.Forward("emplace", CommanderNetwork.Id(pending.Trailer), CommanderNetwork.Position(destination)))
-        {
-            SetStatus("Relocating.");
-            return true;
-        }
-
-        StartRelocation(pending.Trailer, pending.Tractor, destination);
-        return true;
+        // Set down clear of the hauler's tail: in place, a container lands under the bed and the
+        // hauler is thrown up off it.
+        Transform tractor = job.Tractor.transform;
+        float clear = HalfLength(job.Tractor) + HalfLength(job.Trailer) + 1f;
+        EndTow(job, (tractor.position - (tractor.forward * clear)).ToGlobalPosition());
+        jobs.Remove(job);
+        SetStatus("Trailer dropped.");
     }
 
     private static bool IsHauler(GroundVehicle vehicle)
@@ -265,218 +253,260 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             && Mathf.Abs(vehicle.speed) <= 2f;
     }
 
-    private static void RemoveTransportedTrailer(RelocationJob job)
+    /// <summary>
+    /// Hitches the trailer behind the tractor the way the game handles a slung vehicle: its own
+    /// GroundVehicle driver is switched off (so its physics job cannot declare it moving and drop it),
+    /// it is kinematic and collider-free, and it is pinned to the tractor's tail every physics step.
+    /// </summary>
+    private static void BeginTow(TowJob job)
     {
-        GroundVehicle? trailer = job.Trailer;
+        GroundVehicle trailer = job.Trailer;
+        float tractorHalf = HalfLength(job.Tractor);
+        float trailerHalf = HalfLength(trailer);
+        bool container = WheelsField?.GetValue(trailer) is GameObject[] { Length: 0 };
+        job.TowOffset = container
+            ? new Vector3(0f, BedHeight, -(tractorHalf - trailerHalf))
+            : new Vector3(0f, GooseneckLift, -(tractorHalf + trailerHalf - GooseneckOverlap));
+        job.TowColliders = Array.FindAll(trailer.GetComponentsInChildren<Collider>(), collider => collider.enabled);
+        foreach (Collider collider in job.TowColliders)
+        {
+            collider.enabled = false;
+        }
+
+        trailer.StowTurrets(true);
+
+        // Stabiliser legs are authored to stay down once deployed; let them fold for the tow.
+        job.StaysDeployed = SetPartsStayDeployed(trailer, null);
+        CommanderPlugin.Log.LogInfo($"Hitch: {CommanderGameAccess.GetUnitLabel(trailer)} has {job.StaysDeployed.Length} deployable part(s) to fold.");
+
+        // Not stationary, so the transform syncs to guests as a slung vehicle's does; this also folds
+        // the deployed parts away.
+        trailer.NetworknetworkStationary = false;
+
+        // The setter only folds the parts when the flag actually changes; fold them regardless.
+        DeployPartsMethod?.Invoke(trailer, new object[] { false });
+        trailer.enabled = false;
+        if (trailer.rb != null)
+        {
+            trailer.rb.isKinematic = true;
+        }
+
+        CommanderPlugin.Instance?.StartCoroutine(Tow(job));
+    }
+
+    private static System.Collections.IEnumerator Tow(TowJob job)
+    {
+        // Global, so a floating-origin shift during the glide does not throw the start off.
+        GlobalPosition from = job.Trailer.GlobalPosition();
+        Quaternion fromRotation = job.Trailer.transform.rotation;
+        float startedAt = Time.time;
+        while (job.Stage != TowStage.ApproachingPickup && job.Trailer != null && job.Tractor != null)
+        {
+            // Glides from where the trailer stood onto the hauler over the hitch, then rides there.
+            float t = Mathf.SmoothStep(0f, 1f, (Time.time - startedAt) / HitchSeconds);
+            Transform tractor = job.Tractor.transform;
+            Vector3 position = Vector3.Lerp(from.ToLocalPosition(), tractor.TransformPoint(job.TowOffset), t);
+            Quaternion rotation = Quaternion.Slerp(fromRotation, tractor.rotation, t);
+            if (job.Trailer.rb != null)
+            {
+                job.Trailer.rb.MovePosition(position);
+                job.Trailer.rb.MoveRotation(rotation);
+            }
+            else
+            {
+                job.Trailer.transform.SetPositionAndRotation(position, rotation);
+            }
+
+            // Its own Update, which turns the wheels, is off while it rides; roll them at the hauler's pace.
+            job.Trailer.AnimateWheels(job.Tractor.speed);
+            yield return new WaitForFixedUpdate();
+        }
+    }
+
+    /// <summary>Unhitches the trailer and emplaces it on the terrain at <paramref name="position"/>.</summary>
+    private static void EndTow(TowJob job, GlobalPosition position)
+    {
+        job.Stage = TowStage.ApproachingPickup;
+        GroundVehicle trailer = job.Trailer;
         if (trailer == null)
         {
             return;
         }
 
-        job.LastTrailerPosition = trailer.GlobalPosition();
-        UnityEngine.Object.Destroy(trailer.gameObject);
-        job.Trailer = null;
+        foreach (Collider collider in job.TowColliders)
+        {
+            if (collider != null)
+            {
+                collider.enabled = true;
+            }
+        }
+
+        trailer.enabled = true;
+        trailer.StowTurrets(false);
+        CommanderGameAccess.TeleportGroundVehicle(trailer, position);
+        CommanderGameAccess.SetUnitHoldPosition(trailer, hold: true);
+
+        // Stationary again: kinematic, parts deployed, anchored to the ground, as a placed trailer is.
+        trailer.NetworknetworkStationary = true;
+        SetPartsStayDeployed(trailer, job.StaysDeployed);
     }
 
-    private static bool RestoreTrailer(RelocationJob job, GlobalPosition position)
+    /// <summary>
+    /// Sets every deployable part's staysDeployed flag: to the saved values, or all off when
+    /// <paramref name="values"/> is null. Returns what the flags were.
+    /// </summary>
+    private static bool[] SetPartsStayDeployed(GroundVehicle vehicle, bool[]? values)
     {
-        if (job.Trailer != null && !job.Trailer.disabled)
+        if (DeployablePartsField?.GetValue(vehicle) is not Array parts || parts.Length == 0)
         {
+            return Array.Empty<bool>();
+        }
+
+        FieldInfo? flag = AccessTools.Field(parts.GetType().GetElementType(), "staysDeployed");
+        bool[] old = new bool[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            object? part = parts.GetValue(i);
+            if (part == null || flag == null)
+            {
+                continue;
+            }
+
+            old[i] = (bool)flag.GetValue(part);
+            flag.SetValue(part, values != null && i < values.Length && values[i]);
+        }
+
+        return old;
+    }
+
+    private static float HalfLength(Unit unit)
+    {
+        return unit.definition != null && unit.definition.length > 0f ? unit.definition.length * 0.5f : 4f;
+    }
+
+    private TowJob? FindJob(Unit? unit)
+    {
+        if (unit == null)
+        {
+            return null;
+        }
+
+        foreach (TowJob job in jobs)
+        {
+            if (ReferenceEquals(job.Trailer, unit) || ReferenceEquals(job.Tractor, unit))
+            {
+                return job;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Advances one job; true when it is over.</summary>
+    private bool UpdateJob(TowJob job)
+    {
+        bool trailerLost = job.Trailer == null || job.Trailer.disabled;
+        if (job.Tractor == null || job.Tractor.disabled)
+        {
+            if (!trailerLost && job.Stage != TowStage.ApproachingPickup)
+            {
+                EndTow(job, job.Trailer!.GlobalPosition());
+            }
+
+            SetStatus("Hauler lost.");
             return true;
         }
 
-        if (!job.TrailerRemoved || job.Definition?.unitPrefab == null || job.Hq == null || NetworkSceneSingleton<Spawner>.i == null)
+        if (trailerLost)
         {
-            return !job.TrailerRemoved;
-        }
-
-        Quaternion rotation = Quaternion.Euler(0f, job.Tractor != null ? job.Tractor.transform.eulerAngles.y : job.OriginalRotation.eulerAngles.y, 0f);
-        Vector3 requestedLocal = position.ToLocalPosition();
-        Vector3 groundLocal = requestedLocal - (Vector3.up * job.Definition.spawnOffset.y);
-        if (Physics.Raycast(
-            requestedLocal + (Vector3.up * 250f),
-            Vector3.down,
-            out RaycastHit groundHit,
-            1000f,
-            8256,
-            QueryTriggerInteraction.Ignore))
-        {
-            groundLocal = groundHit.point;
-        }
-
-        GroundVehicle restored = NetworkSceneSingleton<Spawner>.i.SpawnVehicle(
-            job.Definition.unitPrefab,
-            (groundLocal + (Vector3.up * job.Definition.spawnOffset.y)).ToGlobalPosition(),
-            rotation,
-            Vector3.zero,
-            job.Hq,
-            job.UniqueName,
-            job.Skill,
-            holdPosition: true,
-            null);
-        if (restored == null)
-        {
-            return false;
-        }
-
-        int stationCount = Mathf.Min(restored.weaponStations.Count, job.WeaponAmmo.Length);
-        for (int i = 0; i < stationCount; i++)
-        {
-            WeaponStation station = restored.weaponStations[i];
-            int[] savedAmmo = job.WeaponAmmo[i];
-            int weaponCount = Mathf.Min(station.Weapons.Count, savedAmmo.Length);
-            for (int weaponIndex = 0; weaponIndex < weaponCount; weaponIndex++)
-            {
-                Weapon weapon = station.Weapons[weaponIndex];
-                if (weapon != null)
-                {
-                    weapon.ammo = Mathf.Clamp(savedAmmo[weaponIndex], 0, weapon.GetFullAmmo());
-                }
-            }
-
-            station.AccountAmmo();
-            station.Updated();
-        }
-
-        Rearmer[] restoredRearmers = restored.GetComponentsInChildren<Rearmer>(true);
-        int rearmerCount = Mathf.Min(restoredRearmers.Length, job.RearmerCapacities.Length);
-        for (int i = 0; i < rearmerCount; i++)
-        {
-            Rearmer rearmer = restoredRearmers[i];
-            if (rearmer != null)
-            {
-                rearmer.SetCapacity(Mathf.Clamp(job.RearmerCapacities[i], 0f, rearmer.GetMaxCapacity()));
-            }
-        }
-
-        Radar[] radars = restored.GetComponentsInChildren<Radar>();
-        for (int i = 0; i < radars.Length; i++)
-        {
-            radars[i].activated = job.RadarOnline;
-            radars[i].enabled = job.RadarOnline;
-        }
-
-        job.Trailer = restored;
-        job.TrailerRemoved = false;
-        job.LastTrailerPosition = restored.GlobalPosition();
-        return true;
-    }
-
-    private bool UpdateJob(RelocationJob job)
-    {
-        if (job.Tractor == null || job.Tractor.disabled)
-        {
-            RestoreTrailer(job, job.GetSafeRestorePosition());
-            SetStatus("Relocation failed: tractor lost. The trailer was restored.");
+            job.Stage = TowStage.ApproachingPickup;
+            CommanderGameAccess.SetUnitHoldPosition(job.Tractor, hold: false);
+            SetStatus("Trailer lost.");
             return true;
         }
 
         switch (job.Stage)
         {
-            case RelocationStage.ApproachingPickup:
-                if (job.Trailer == null || job.Trailer.disabled)
+            case TowStage.ApproachingPickup:
+                // The trailer can move under the tractor's feet: a freshly bought one sits inside its
+                // depot until CommanderDepotLane lifts it outside, and the old spot is then unreachable.
+                if (!CommanderGameAccess.ApproximatelyEqual(job.AimedAtTrailer, job.Trailer!.GlobalPosition(), 5f))
                 {
-                    SetStatus("Relocation cancelled: trailer unavailable.");
-                    return true;
+                    job.AimPickup();
+                    IssueHaulerDestination(job.Tractor, job.PickupStagingPoint);
+                    CommanderPlugin.Log.LogInfo("Hitch: trailer moved, tractor re-aimed.");
+                }
+                else if (CommanderGameAccess.TryGetCurrentCommandPosition(job.Tractor, out GlobalPosition ordered)
+                    && !CommanderGameAccess.ApproximatelyEqual(ordered, job.PickupStagingPoint, 5f))
+                {
+                    // Something else (a depot lane clear, a pin) replaced the pickup order.
+                    IssueHaulerDestination(job.Tractor, job.PickupStagingPoint);
+                    CommanderPlugin.Log.LogInfo("Hitch: tractor's order was replaced, pickup re-sent.");
                 }
 
-                if (HasArrived(job.Tractor, job.PickupStagingPoint))
+                // The game's pathfinder drops a last waypoint that is behind the truck and within
+                // 60 m, so a truck can park short of the trailer and never move again. Stopped and
+                // close enough counts as there: the trailer glides the rest of the way.
+                float distance = CommanderGameAccess.HorizontalDistance(job.Tractor.transform.position, job.Trailer!.transform.position);
+                bool stopped = Mathf.Abs(job.Tractor.speed) <= 1f;
+                job.StoppedSince = stopped ? Mathf.Min(job.StoppedSince, Time.unscaledTime) : float.MaxValue;
+                bool parkedNear = distance <= GlideRange && Time.unscaledTime - job.StoppedSince >= StallSeconds;
+                if (parkedNear || HasArrived(job.Tractor, job.PickupStagingPoint))
                 {
-                    job.Stage = RelocationStage.Loading;
-                    job.StageCompleteAt = Time.unscaledTime + HandlingSeconds;
+                    CommanderPlugin.Log.LogInfo($"Hitch: {CommanderGameAccess.GetUnitLabel(job.Tractor)} stopped {distance:0} m from the trailer; hitching.");
+                    job.Stage = TowStage.Hitching;
+                    job.StageCompleteAt = Time.unscaledTime + HitchSeconds;
                     IssueHaulerDestination(job.Tractor, job.Tractor.GlobalPosition());
-                    SetStatus("Loading trailer (10 seconds).");
+                    BeginTow(job);
+                    SetStatus("Hitching trailer (10 seconds).");
                 }
 
                 break;
 
-            case RelocationStage.Loading:
-                if (job.Trailer == null || job.Trailer.disabled)
-                {
-                    SetStatus("Relocation cancelled: trailer unavailable.");
-                    return true;
-                }
-
+            case TowStage.Hitching:
                 if (Time.unscaledTime < job.StageCompleteAt)
                 {
                     break;
                 }
 
-                job.CaptureTrailerState();
-                RemoveTransportedTrailer(job);
-                job.Stage = RelocationStage.Transporting;
-                IssueHaulerDestination(job.Tractor, job.DeliveryStagingPoint);
-                SetStatus("Trailer loaded. Tractor moving to destination.");
-                break;
-
-            case RelocationStage.Transporting:
-                if (HasArrived(job.Tractor, job.DeliveryStagingPoint))
-                {
-                    job.Stage = RelocationStage.Unloading;
-                    job.StageCompleteAt = Time.unscaledTime + HandlingSeconds;
-                    IssueHaulerDestination(job.Tractor, job.Tractor.GlobalPosition());
-                    SetStatus("Deploying trailer (10 seconds).");
-                }
-
-                break;
-
-            case RelocationStage.Unloading:
-                if (Time.unscaledTime < job.StageCompleteAt)
-                {
-                    break;
-                }
-
-                if (!RestoreTrailer(job, job.Destination))
-                {
-                    SetStatus("Trailer deployment failed; it will be restored when the order is cancelled.");
-                    return false;
-                }
-
-                Vector3 clearDirection = job.Tractor.transform.forward;
-                clearDirection.y = 0f;
-                if (clearDirection.sqrMagnitude < 0.1f)
-                {
-                    clearDirection = Vector3.forward;
-                }
-
+                job.Stage = TowStage.Towing;
+                CommanderPlugin.Log.LogInfo($"Hitch: {CommanderGameAccess.GetUnitLabel(job.Trailer)} hitched.");
                 CommanderGameAccess.SetUnitHoldPosition(job.Tractor, hold: false);
-                IssueHaulerDestination(
-                    job.Tractor,
-                    (job.Tractor.transform.position + (clearDirection.normalized * 25f)).ToGlobalPosition());
-                SetStatus("Trailer deployed. Tractor released to Basegame AI.");
-                return true;
+                SetStatus("Trailer hitched. Move the hauler, then DROP TRAILER.");
+                break;
         }
 
         return false;
     }
 
-    private void StartRelocation(GroundVehicle trailer, GroundVehicle tractor, GlobalPosition destination)
+    private void StartHitch(GroundVehicle trailer, GroundVehicle tractor)
     {
-        RelocationJob job = new(trailer, tractor, destination);
+        TowJob job = new(trailer, tractor);
         jobs.Add(job);
-        reservedHaulers.Add(tractor);
         CommanderGameAccess.SetUnitHoldPosition(tractor, hold: true);
         IssueHaulerDestination(tractor, job.PickupStagingPoint);
-        SetStatus($"{CommanderGameAccess.GetUnitLabel(tractor)} dispatched to load the trailer.");
+        CommanderPlugin.Log.LogInfo(
+            $"Hitch: {CommanderGameAccess.GetUnitLabel(tractor)} sent to {CommanderGameAccess.GetUnitLabel(trailer)}, "
+            + $"{CommanderGameAccess.HorizontalDistance(tractor.transform.position, trailer.transform.position):0} m away.");
+        SetStatus($"{CommanderGameAccess.GetUnitLabel(tractor)} dispatched to hitch the trailer.");
     }
 
-    /// <summary>A guest's relocation click: the host picks the tractor, as the guest's own window did.</summary>
-    private void HostRelocate(FactionHQ hq, string[] args)
+    /// <summary>A guest's hitch request: the host picks the tractor, as the guest's own window did.</summary>
+    private void HostHitch(FactionHQ hq, string[] args)
     {
         string hostStatus = statusText;
         float hostUntil = statusUntil;
         if (!CommanderNetwork.TryUnit(args, 1, out Unit unit)
             || unit is not GroundVehicle trailer
             || !ReferenceEquals(trailer.NetworkHQ, hq)
-            || !IsMoveableTrailer(trailer)
-            || !CommanderNetwork.TryPosition(args, 2, out GlobalPosition destination))
+            || !IsMoveableTrailer(trailer))
         {
             return;
         }
 
-        if (IsRelocating(trailer))
+        if (FindJob(trailer) != null)
         {
-            CommanderNotice.Fail("This trailer already has a relocation order.");
+            CommanderNotice.Fail("This trailer is already being hitched.");
         }
         else if (!TryFindTractor(trailer, out GroundVehicle tractor))
         {
@@ -484,11 +514,23 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         }
         else
         {
-            StartRelocation(trailer, tractor, destination);
+            StartHitch(trailer, tractor);
         }
 
         statusText = hostStatus;
         statusUntil = hostUntil;
+    }
+
+    private void HostDrop(FactionHQ hq, string[] args)
+    {
+        if (CommanderNetwork.TryUnit(args, 1, out Unit unit) && ReferenceEquals(unit.NetworkHQ, hq))
+        {
+            string hostStatus = statusText;
+            float hostUntil = statusUntil;
+            DropTrailer(unit);
+            statusText = hostStatus;
+            statusUntil = hostUntil;
+        }
     }
 
     private bool TryFindTractor(GroundVehicle trailer, out GroundVehicle tractor)
@@ -506,7 +548,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             if (!unitId.TryGetUnit(out Unit unit)
                 || unit is not GroundVehicle vehicle
                 || vehicle.disabled
-                || reservedHaulers.Contains(vehicle)
+                || FindJob(vehicle) != null
                 || !IsHauler(vehicle)
                 || !IsIdle(vehicle))
             {
@@ -543,131 +585,49 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         statusUntil = Time.unscaledTime + StatusDurationSeconds;
     }
 
-    private sealed class PendingRelocation
+    private sealed class TowJob
     {
-        internal PendingRelocation(GroundVehicle trailer, GroundVehicle tractor)
+        internal TowJob(GroundVehicle trailer, GroundVehicle tractor)
         {
             Trailer = trailer;
             Tractor = tractor;
+            AimPickup();
         }
 
         internal GroundVehicle Trailer { get; }
 
         internal GroundVehicle Tractor { get; }
-    }
 
-    private sealed class RelocationJob
-    {
-        internal RelocationJob(GroundVehicle trailer, GroundVehicle tractor, GlobalPosition destination)
-        {
-            Trailer = trailer;
-            Tractor = tractor;
-            Destination = destination;
-            LastTrailerPosition = trailer.GlobalPosition();
-            OriginalRotation = trailer.transform.rotation;
-            Hq = trailer.NetworkHQ;
-            Definition = trailer.definition as VehicleDefinition;
-            UniqueName = trailer.UniqueName;
-            Skill = trailer.skill;
+        internal GlobalPosition PickupStagingPoint { get; private set; }
 
-            Vector3 pickupDirection = tractor.transform.position - trailer.transform.position;
-            pickupDirection.y = 0f;
-            if (pickupDirection.sqrMagnitude < 0.1f)
-            {
-                pickupDirection = trailer.transform.forward;
-            }
+        /// <summary>Where the trailer was when <see cref="PickupStagingPoint"/> was picked.</summary>
+        internal GlobalPosition AimedAtTrailer { get; private set; }
 
-            PickupStagingPoint = (trailer.transform.position + (pickupDirection.normalized * StagingDistance)).ToGlobalPosition();
-
-            Vector3 destinationLocal = destination.ToLocalPosition();
-            Vector3 deliveryDirection = tractor.transform.position - destinationLocal;
-            deliveryDirection.y = 0f;
-            if (deliveryDirection.sqrMagnitude < 0.1f)
-            {
-                deliveryDirection = -tractor.transform.forward;
-            }
-
-            DeliveryStagingPoint = (destinationLocal + (deliveryDirection.normalized * StagingDistance)).ToGlobalPosition();
-        }
-
-        internal GroundVehicle? Trailer { get; set; }
-
-        internal GroundVehicle Tractor { get; }
-
-        internal GlobalPosition Destination { get; }
-
-        internal GlobalPosition PickupStagingPoint { get; }
-
-        internal GlobalPosition DeliveryStagingPoint { get; }
-
-        internal GlobalPosition LastTrailerPosition { get; set; }
-
-        internal Quaternion OriginalRotation { get; }
-
-        internal FactionHQ? Hq { get; }
-
-        internal VehicleDefinition? Definition { get; }
-
-        internal string UniqueName { get; }
-
-        internal float Skill { get; }
-
-        internal RelocationStage Stage { get; set; }
+        internal TowStage Stage { get; set; }
 
         internal float StageCompleteAt { get; set; }
 
-        internal int[][] WeaponAmmo { get; private set; } = Array.Empty<int[]>();
+        internal float StoppedSince { get; set; } = float.MaxValue;
 
-        internal float[] RearmerCapacities { get; private set; } = Array.Empty<float>();
+        /// <summary>Where the load rides, in the hauler's local frame.</summary>
+        internal Vector3 TowOffset { get; set; }
 
-        internal bool RadarOnline { get; private set; } = true;
+        internal Collider[] TowColliders { get; set; } = Array.Empty<Collider>();
 
-        internal bool TrailerRemoved { get; set; }
+        internal bool[] StaysDeployed { get; set; } = Array.Empty<bool>();
 
-        internal void CaptureTrailerState()
+        /// <summary>The pickup spot: <see cref="StagingDistance"/> out from the trailer on the tractor's side.</summary>
+        internal void AimPickup()
         {
-            if (Trailer == null)
+            Vector3 pickupDirection = Tractor.transform.position - Trailer.transform.position;
+            pickupDirection.y = 0f;
+            if (pickupDirection.sqrMagnitude < 0.1f)
             {
-                return;
+                pickupDirection = Trailer.transform.forward;
             }
 
-            WeaponAmmo = new int[Trailer.weaponStations.Count][];
-            for (int i = 0; i < WeaponAmmo.Length; i++)
-            {
-                WeaponStation station = Trailer.weaponStations[i];
-                WeaponAmmo[i] = new int[station.Weapons.Count];
-                for (int weaponIndex = 0; weaponIndex < station.Weapons.Count; weaponIndex++)
-                {
-                    Weapon weapon = station.Weapons[weaponIndex];
-                    WeaponAmmo[i][weaponIndex] = weapon?.ammo ?? 0;
-                }
-            }
-
-            Rearmer[] rearmers = Trailer.GetComponentsInChildren<Rearmer>(true);
-            RearmerCapacities = new float[rearmers.Length];
-            for (int i = 0; i < rearmers.Length; i++)
-            {
-                RearmerCapacities[i] = rearmers[i]?.Capacity ?? 0f;
-            }
-
-            Radar[] radars = Trailer.GetComponentsInChildren<Radar>();
-            RadarOnline = radars.Length == 0;
-            for (int i = 0; i < radars.Length; i++)
-            {
-                RadarOnline |= radars[i] != null && radars[i].activated;
-            }
-
-            TrailerRemoved = true;
-        }
-
-        internal GlobalPosition GetSafeRestorePosition()
-        {
-            if (Tractor != null && !Tractor.disabled && TrailerRemoved)
-            {
-                return Tractor.GlobalPosition();
-            }
-
-            return LastTrailerPosition;
+            AimedAtTrailer = Trailer.GlobalPosition();
+            PickupStagingPoint = (Trailer.transform.position + (pickupDirection.normalized * StagingDistance)).ToGlobalPosition();
         }
     }
 }

@@ -28,6 +28,7 @@ internal static class CommanderMapSettings
     internal const string BuildersPrefix = "GC Builders ";
     internal const string HeadStartPrefix = "GC AI Head Start ";
     internal const string AiIncomePrefix = "GC AI Income ";
+    internal const string BaseIncomePrefix = "GC Base Income ";
 
     internal const string AiCommandersPrefix = "GC AI Commanders ";
     internal const string EnemyModePrefix = "GC Enemy Mode ";
@@ -53,18 +54,23 @@ internal static class CommanderMapSettings
     /// start of another, or a tag would read as both.</summary>
     private static readonly string[] NumberPrefixes =
     {
-        BuildersPrefix, HeadStartPrefix, AiIncomePrefix, AiCommandersPrefix, EnemyModePrefix,
+        BuildersPrefix, HeadStartPrefix, AiIncomePrefix, BaseIncomePrefix, AiCommandersPrefix, EnemyModePrefix,
         EnemyDifficultyPrefix, HumanTeamsPrefix, FactoryVehiclesPrefix, FriendlyAiOffPrefix,
         BanVotePrefix, BansPerSidePrefix, UnitCapPrefix, ShipCapPrefix, ArtilleryCapPrefix, AircraftCapPrefix,
         BuildRadiusPrefix, DockRadiusPrefix, AircraftCapturePrefix,
     };
 
     // Settings are read every frame and a tag's number is a substring parse. Every write of ours goes
-    // through SetTag, which bumps the revision, so a cache is never stale.
+    // through SetTag, which bumps the Revision, so a cache is never stale.
     private static readonly Dictionary<string, float> Cached = new();
     private static Mission? cachedFor;
-    private static int revision;
     private static int cachedRevision = -1;
+
+    /// <summary>Moves on every tag write of ours, so a cache of a mission's tags knows to re-read.</summary>
+    internal static int Revision { get; private set; }
+
+    /// <summary>A match is being played: the map's tags are obeyed, not edited.</summary>
+    internal static bool InMatch => GameManager.gameState is GameState.SinglePlayer or GameState.Multiplayer or GameState.ServerWaiting;
 
     /// <summary>Only the map's own objectives end the match; losing the starting base is no defeat.</summary>
     internal static bool ObjectivesWinOnly =>
@@ -84,21 +90,29 @@ internal static class CommanderMapSettings
     /// <summary>Flat AI income per minute, or null for the mode's own.</summary>
     internal static float? AiIncomePerMinute => Override(AiIncomePrefix);
 
+    /// <summary>Income a minute every side gets as if from an income building it does not have; 0 for none.</summary>
+    internal static int BaseIncomePerMinute => Mathf.Max(0, OverrideInt(BaseIncomePrefix) ?? 0);
+
+    internal static void Touch()
+    {
+        Revision++;
+    }
+
     /// <summary>The number the mission being played sets for <paramref name="prefix"/>. Only in a
     /// match: in the menu and the editor the config and the tags are edited, not obeyed. A stock
     /// mission carries no "GC " tags unless Customize Mission put them there.</summary>
     internal static float? Override(string prefix)
     {
-        if (GameManager.gameState is not (GameState.SinglePlayer or GameState.Multiplayer or GameState.ServerWaiting))
+        if (!InMatch)
         {
             return null;
         }
 
         Mission? mission = MissionManager.CurrentMission;
-        if (!ReferenceEquals(mission, cachedFor) || cachedRevision != revision)
+        if (!ReferenceEquals(mission, cachedFor) || cachedRevision != Revision)
         {
             cachedFor = mission;
-            cachedRevision = revision;
+            cachedRevision = Revision;
             Cached.Clear();
             for (int i = 0; i < NumberPrefixes.Length; i++)
             {
@@ -193,7 +207,7 @@ internal static class CommanderMapSettings
     {
         List<MissionTag> tags = mission.missionSettings.Tags ??= new List<MissionTag>();
         tags.RemoveAll(existing => existing.Tag == tag);
-        revision++;
+        Revision++;
         if (on)
         {
             // Fields, not the constructor: a game patch added parameters to it, and a DLL built

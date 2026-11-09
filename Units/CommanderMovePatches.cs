@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using HarmonyLib;
 using NuclearOption.Networking;
 
@@ -5,6 +6,19 @@ namespace GroundControlRts;
 
 internal static class CommanderMovePatches
 {
+    /// <summary>
+    /// A towing tractor must not steer around the trailer hitched to its own tail, or it drives in
+    /// circles trying to get clear of it.
+    /// </summary>
+    [HarmonyPatch(typeof(GroundVehicle), "UpdateObstacles")]
+    internal static class CommanderTowObstaclePatch
+    {
+        internal static void Postfix(GroundVehicle __instance, List<Obstacle> ___obstacles)
+        {
+            ___obstacles.RemoveAll(obstacle => CommanderMobileEmplacementService.IsTowedBy(__instance, obstacle.Transform));
+        }
+    }
+
     [HarmonyPatch(typeof(UnitCommand), "ServerSetDestination")]
     internal static class CommanderMoveDestinationPatch
     {
@@ -160,6 +174,20 @@ internal static class CommanderMovePatches
             {
                 CommanderPlugin.Log.LogInfo($"HOLD FIRE: {unit.unitName} kept its {path} quiet.");
             }
+        }
+    }
+
+    /// <summary>Missiles only: an IR SAM set to it refuses every candidate that is not a missile.</summary>
+    [HarmonyPatch(typeof(Turret), "AssessTargetPriority")]
+    internal static class CommanderMissileOnlyPatch
+    {
+        private static readonly AccessTools.FieldRef<Turret, Unit> TurretAttachedUnit =
+            AccessTools.FieldRefAccess<Turret, Unit>("attachedUnit");
+
+        internal static bool Prefix(Turret __instance, Unit targetCandidate)
+        {
+            return targetCandidate is Missile
+                || !CommanderMoveService.IsMissileOnly(TurretAttachedUnit(__instance));
         }
     }
 

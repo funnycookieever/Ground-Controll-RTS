@@ -61,10 +61,20 @@ internal static class CommanderWindowScale
     private static int draggingId;
     private static Vector2 dragOffset;
 
+    /// <summary>The scaled window whose contents are drawing now, or 0 outside one.</summary>
+    internal static int Current { get; private set; }
+
+    /// <summary>The +/- buttons beside a window's "?": one zoom step, saved like the grip.</summary>
+    internal static void Step(int id, float delta)
+    {
+        Scales[ScaleKey(id)] = Mathf.Clamp(Mathf.Round((Get(id) + delta) * 10f) / 10f, MinScale, MaxScale);
+        Save();
+    }
+
     internal static float Get(int id)
     {
         Load();
-        return Scales.TryGetValue(id, out float scale) ? scale : 1f;
+        return Scales.TryGetValue(ScaleKey(id), out float scale) ? scale : 1f;
     }
 
     /// <summary>
@@ -191,6 +201,12 @@ internal static class CommanderWindowScale
         DrawGrip(id, grip);
     }
 
+    /// <summary>TRANSPORT is opened from AIR COMMAND, so it zooms with it: one scale for both.</summary>
+    private static int ScaleKey(int id)
+    {
+        return id == CommanderSupplyHeliUi.WindowId ? CommanderAirCommandUi.WindowId : id;
+    }
+
     private static void TickPointer(int id, Rect rect)
     {
         if (Input.GetMouseButton(0))
@@ -208,10 +224,13 @@ internal static class CommanderWindowScale
                 }
                 else
                 {
-                    // Grows by whichever axis the cursor pulled further, like the map grip.
+                    // Follows whichever axis the cursor pulled further, in or out. A plain Max only
+                    // shrank when both axes were pulled in, so dragging left or up alone did nothing.
                     Vector2 start = rect.size * resizeStartScale;
-                    float factor = Mathf.Max((start.x + delta.x) / start.x, (start.y + delta.y) / start.y);
-                    Scales[id] = Mathf.Clamp(resizeStartScale * factor, MinScale, MaxScale);
+                    float fx = (start.x + delta.x) / start.x;
+                    float fy = (start.y + delta.y) / start.y;
+                    float factor = Mathf.Abs(fx - 1f) >= Mathf.Abs(fy - 1f) ? fx : fy;
+                    Scales[ScaleKey(id)] = Mathf.Clamp(resizeStartScale * factor, MinScale, MaxScale);
                 }
             }
 
@@ -337,7 +356,16 @@ internal static class CommanderWindowScale
                 }
             }
 
-            draw(windowId);
+            Current = windowId;
+            try
+            {
+                draw(windowId);
+            }
+            finally
+            {
+                Current = 0;
+            }
+
             if (edges)
             {
                 DrawNotch(left, lengthwise: false, extentId == windowId && extentRightEdge >= 0f);
@@ -370,7 +398,7 @@ internal static class CommanderWindowScale
 
         if (current.button == 1)
         {
-            Scales.Remove(id);
+            Scales.Remove(ScaleKey(id));
             Extents.Remove((id, WidthSlot));
             Extents.Remove((id, HeightSlot));
             Save();

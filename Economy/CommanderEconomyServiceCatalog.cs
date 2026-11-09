@@ -56,6 +56,11 @@ internal sealed partial class CommanderEconomyService
             return Mathf.Max(0f, CommanderSettings.EnrichmentPlantCost);
         }
 
+        if (definition.unitPrefab != null && definition.unitPrefab.GetComponentInChildren<VehicleDepot>(true) != null)
+        {
+            return 100f;
+        }
+
         // Hand-set prices; jsonKeys from the game's mission data. Aircraft spawn points go by unit name
         // from the part table.
         return definition.jsonKey switch

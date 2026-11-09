@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using BepInEx;
+using NuclearOption.SavedMission;
 using UnityEngine;
 
 namespace GroundControlRts;
@@ -30,9 +31,18 @@ internal static class CommanderPriceProfile
     private const string Extension = ".txt";
     private const float RequestRetrySeconds = 5f;
 
+    /// <summary>A map's own prices: one hidden mission tag, "GC Prices name; income = 1; unit X = 50".</summary>
+    private const string MissionTagPrefix = "GC Prices ";
+
     private static readonly Table Own = new();
     private static readonly Table Empty = new();
     private static readonly List<string> NameScratch = new();
+    private static readonly Table MapTable = new();
+    private static readonly Table Scratch = new();
+    private static Mission? mapFor;
+    private static int mapRevision = -1;
+    private static bool hasMap;
+    private static string mapName = string.Empty;
     private static Table? host;
     private static string hostRevision = string.Empty;
     private static float lastRequestAt = -100f;
@@ -47,12 +57,36 @@ internal static class CommanderPriceProfile
 
     internal static bool IsStandard => ProfileName == StandardName;
 
-    /// <summary>A guest reads the host's table, or the mod's prices until it arrives. Everyone else reads their own.</summary>
-    internal static Table Active => CommanderNetwork.IsGuest ? host ?? Empty : Own;
+    /// <summary>A guest reads the host's table, or the mod's prices until it arrives. Everyone else
+    /// reads the map's own prices in a match on a map that has them, else their own profile.</summary>
+    internal static Table Active => CommanderNetwork.IsGuest ? host ?? Empty : Map ?? Own;
 
     internal static float IncomeMultiplier => Active.Income;
 
     internal static string Folder => Path.Combine(Path.Combine(Paths.ConfigPath, "GroundControlRts"), "Economy");
+
+    /// <summary>The prices of the mission being played, re-read whenever its tags change.</summary>
+    private static Table? Map
+    {
+        get
+        {
+            Mission? mission = CommanderMapSettings.InMatch ? MissionManager.CurrentMission : null;
+            if (!ReferenceEquals(mission, mapFor) || mapRevision != CommanderMapSettings.Revision)
+            {
+                mapFor = mission;
+                mapRevision = CommanderMapSettings.Revision;
+                bool had = hasMap;
+                hasMap = TryReadMission(mission, MapTable, out mapName);
+                if (had || hasMap)
+                {
+                    Revision++;
+                    CommanderEconomyService.InvalidatePrices();
+                }
+            }
+
+            return hasMap ? MapTable : null;
+        }
+    }
 
     /// <summary>Once at plugin load: reads the saved profile and teaches the network the three verbs.</summary>
     internal static void Initialize()
@@ -230,6 +264,35 @@ internal static class CommanderPriceProfile
         return name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && name != StandardName;
     }
 
+    /// <summary>"name (changes)" for a mission that carries its own prices, else null.</summary>
+    internal static string? DescribeMission(Mission? mission)
+    {
+        return TryReadMission(mission, Scratch, out string name) ? $"{name} ({ChangeCount(Scratch)})" : null;
+    }
+
+    /// <summary>
+    /// Opens UNIT PRICES on a mission's own prices: they are loaded as a profile (an existing file
+    /// with the same prices, else a new one), and on close the profile shown is written into the
+    /// mission (STANDARD removes it) and the player's own profile is put back.
+    /// </summary>
+    internal static void EditMission(Mission mission, Action? closed)
+    {
+        if (CommanderPriceEditorUi.IsOpen)
+        {
+            return;
+        }
+
+        string previous = ProfileName;
+        Table table = new();
+        Load(TryReadMission(mission, table, out string name) ? Import(name, table) : StandardName);
+        CommanderPriceEditorUi.Open(() =>
+        {
+            WriteMission(mission, IsStandard ? null : ProfileName, Own);
+            Load(previous);
+            closed?.Invoke();
+        });
+    }
+
     /// <summary>Asserts a profile survives the file and the network round trip.</summary>
     internal static void SelfCheck()
     {
@@ -245,6 +308,11 @@ internal static class CommanderPriceProfile
         Pack(table, "x", 7).CopyTo(wire, 1);
         Unpack(wire, fromWire);
         bool ok = Same(table, fromFile) && Same(table, fromWire);
+        Mission mission = new() { missionSettings = new MissionSettings() };
+        WriteMission(mission, "Map; test", table);
+        WriteMission(mission, "Map; test", table);
+        Table fromMission = new();
+        ok &= mission.missionSettings.Tags.Count == 1 && TryReadMission(mission, fromMission, out string readName) && readName == "Map  test" && Same(table, fromMission);
         if (ok)
         {
             CommanderPlugin.Log.LogInfo("Economy profile self-check passed.");
@@ -252,6 +320,76 @@ internal static class CommanderPriceProfile
         else
         {
             CommanderPlugin.Log.LogError("Economy profile self-check FAILED: a profile does not survive the file or the network round trip.");
+        }
+    }
+
+    /// <summary>Replaces the mission's prices with <paramref name="table"/>, or removes them for a null name or an empty table.</summary>
+    private static void WriteMission(Mission mission, string? name, Table table)
+    {
+        List<MissionTag> tags = mission.missionSettings.Tags ??= new List<MissionTag>();
+        tags.RemoveAll(static tag => tag.Tag != null && tag.Tag.StartsWith(MissionTagPrefix, StringComparison.Ordinal));
+        CommanderMapSettings.Touch();
+        if (name == null || ChangeCount(table) == 0)
+        {
+            return;
+        }
+
+        StringBuilder text = new(MissionTagPrefix);
+        text.Append(name.Replace(';', ' ').Replace('=', ' '));
+        foreach (string line in Serialize(table).Split('\n'))
+        {
+            string trimmed = line.Trim();
+            if (trimmed.Length > 0 && trimmed[0] != '#')
+            {
+                text.Append("; ").Append(trimmed);
+            }
+        }
+
+        CommanderMapSettings.SetTag(mission, text.ToString(), true);
+    }
+
+    private static bool TryReadMission(Mission? mission, Table into, out string name)
+    {
+        into.Clear();
+        name = string.Empty;
+        List<MissionTag>? tags = mission?.missionSettings?.Tags;
+        for (int i = 0; tags != null && i < tags.Count; i++)
+        {
+            string tag = tags[i].Tag;
+            if (tag != null && tag.StartsWith(MissionTagPrefix, StringComparison.Ordinal))
+            {
+                string body = tag.Substring(MissionTagPrefix.Length);
+                int end = body.IndexOf(';');
+                name = (end < 0 ? body : body.Substring(0, end)).Trim();
+                Parse(body.Replace(';', '\n'), into);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The name of a profile holding exactly <paramref name="table"/>: an existing one, or a new file.</summary>
+    private static string Import(string name, Table table)
+    {
+        string stem = name.Length > 0 && IsValidName(name) ? name : "Map prices";
+        for (int i = 1; ; i++)
+        {
+            string candidate = i == 1 ? stem : $"{stem} {i}";
+            string path = PathOf(candidate);
+            if (!File.Exists(path))
+            {
+                Directory.CreateDirectory(Folder);
+                File.WriteAllText(path, Serialize(table));
+                return candidate;
+            }
+
+            Table existing = new();
+            Parse(File.ReadAllText(path), existing);
+            if (Same(existing, table))
+            {
+                return candidate;
+            }
         }
     }
 
@@ -407,7 +545,8 @@ internal static class CommanderPriceProfile
 
     private static string[] Pack()
     {
-        return Pack(Own, ProfileName, Revision);
+        Table active = Active;
+        return Pack(active, ReferenceEquals(active, MapTable) ? mapName : ProfileName, Revision);
     }
 
     private static int PackSize(Table table)

@@ -115,6 +115,11 @@ internal static class CommanderPriceEditorUi
         GUI.color = new Color(0f, 0f, 0f, 0.6f);
         GUI.DrawTexture(new Rect(0f, 0f, CommanderUiScale.Width, CommanderUiScale.Height), Texture2D.whiteTexture);
         GUI.color = previous;
+        windowRect.size = CommanderWindowScale.Size(
+            WindowId,
+            new Vector2(Mathf.Min(780f, CommanderUiScale.Width - 24f), Mathf.Min(900f, CommanderUiScale.Height - 48f)),
+            new Vector2(480f, 360f));
+        windowRect = CommanderWindowScale.Clamp(WindowId, windowRect);
         windowRect = CommanderWindowScale.Window(WindowId, windowRect, DrawWindow, "UNIT PRICES");
     }
 
