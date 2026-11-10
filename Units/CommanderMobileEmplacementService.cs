@@ -37,6 +37,8 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     private static readonly FieldInfo? DeployablePartsField = AccessTools.Field(typeof(GroundVehicle), "deployableParts");
     private static readonly FieldInfo? WheelsField = AccessTools.Field(typeof(GroundVehicle), "wheels");
     private static readonly MethodInfo? DeployPartsMethod = AccessTools.Method(typeof(GroundVehicle), "DeployParts");
+    private static readonly FieldInfo? ElevationField = AccessTools.Field(typeof(Turret), "elevationAngle");
+    private static readonly FieldInfo? ElevationPivotField = AccessTools.Field(typeof(Turret), "elevationTransform");
 
     private readonly CommanderSelectionService selectionService;
     private readonly List<TowJob> jobs = new();
@@ -273,6 +275,12 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             collider.enabled = false;
         }
 
+        // Only the BDF StratoLance needs its launcher elevation preserved for now but can be expanded later if needed.
+        if (trailer.definition?.jsonKey is "SAMTrailer1")
+        {
+            CaptureLauncherElevation(job);
+        }
+
         trailer.StowTurrets(true);
 
         // Stabiliser legs are authored to stay down once deployed; let them fold for the tow.
@@ -342,13 +350,31 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         }
 
         trailer.enabled = true;
-        trailer.StowTurrets(false);
+        bool restoreLauncher = job.LauncherElevations.Count != 0;
+        if (!restoreLauncher)
+        {
+            trailer.StowTurrets(false);
+        }
+
         CommanderGameAccess.TeleportGroundVehicle(trailer, position);
         CommanderGameAccess.SetUnitHoldPosition(trailer, hold: true);
 
-        // Stationary again: kinematic, parts deployed, anchored to the ground, as a placed trailer is.
+        // Keep the existing deployment behavior for every trailer.
         trailer.NetworknetworkStationary = true;
         SetPartsStayDeployed(trailer, job.StaysDeployed);
+
+        if (restoreLauncher)
+        {
+            if (CommanderPlugin.Instance is { } plugin)
+            {
+                plugin.StartCoroutine(FinishUnstow(job));
+            }
+            else
+            {
+                trailer.StowTurrets(false);
+                RestoreLauncherElevation(job);
+            }
+        }
     }
 
     /// <summary>
@@ -377,6 +403,108 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         }
 
         return old;
+    }
+
+    private static void CaptureLauncherElevation(TowJob job)
+    {
+        GroundVehicle trailer = job.Trailer;
+        if (ElevationField == null || ElevationPivotField == null || trailer.weaponStations == null)
+            return;
+
+        foreach (WeaponStation station in trailer.weaponStations)
+        {
+            if (station?.Turrets == null) continue;
+            foreach (Turret turret in station.Turrets)
+            {
+                if (turret != null && ElevationField.GetValue(turret) is float angle
+                    && ElevationPivotField?.GetValue(turret) is Transform pivot)
+                    job.LauncherElevations[turret] = (angle, pivot.localRotation);
+            }
+        }
+    }
+
+    private static void RestoreLauncherElevation(TowJob job)
+    {
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
+        {
+            if (entry.Key == null) continue;
+            ElevationField?.SetValue(entry.Key, entry.Value.Angle);
+            if (ElevationPivotField?.GetValue(entry.Key) is Transform pivot)
+                pivot.localRotation = entry.Value.PivotRotation;
+        }
+    }
+
+    private static System.Collections.IEnumerator FinishUnstow(TowJob job)
+    {
+        GroundVehicle trailer = job.Trailer;
+        yield return new WaitForFixedUpdate();
+
+        if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
+            || Instance?.FindJob(trailer) != null)
+            yield break;
+
+        // Retain the folded pose so unstowing does not visibly snap the launcher upright.
+        var folded = new Dictionary<Turret, (float Angle, Quaternion Rotation)>();
+        foreach (var entry in job.LauncherElevations)
+        {
+            Turret turret = entry.Key;
+            if (turret == null || ElevationPivotField?.GetValue(turret) is not Transform pivot)
+                continue;
+
+            float angle = ElevationField?.GetValue(turret) is float current
+                ? current : entry.Value.Angle;
+            folded[turret] = (angle, pivot.localRotation);
+        }
+
+        trailer.StowTurrets(false);
+
+        // Undo any immediate visual pose change caused by StowTurrets(false).
+        foreach (var entry in folded)
+        {
+            if (entry.Key == null) continue;
+            ElevationField?.SetValue(entry.Key, entry.Value.Angle);
+            if (ElevationPivotField?.GetValue(entry.Key) is Transform pivot)
+                pivot.localRotation = entry.Value.Rotation;
+        }
+
+        const float liftSpeed = 30f; // Degrees per second.
+        float liftDeadline = Time.time + 15f;
+        while (Time.time < liftDeadline)
+        {
+            if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
+                || Instance?.FindJob(trailer) != null)
+                yield break;
+
+            bool finished = true;
+            float step = liftSpeed * Time.fixedDeltaTime;
+            foreach (var entry in job.LauncherElevations)
+            {
+                Turret turret = entry.Key;
+                if (turret == null || ElevationPivotField?.GetValue(turret) is not Transform pivot)
+                    continue;
+
+                pivot.localRotation = Quaternion.RotateTowards(
+                    pivot.localRotation, entry.Value.PivotRotation, step);
+                if (ElevationField?.GetValue(turret) is float current)
+                {
+                    float next = Mathf.MoveTowardsAngle(current, entry.Value.Angle, step);
+                    ElevationField.SetValue(turret, next);
+                    if (Mathf.Abs(Mathf.DeltaAngle(next, entry.Value.Angle)) > 0.1f)
+                        finished = false;
+                }
+
+                if (Quaternion.Angle(pivot.localRotation, entry.Value.PivotRotation) > 0.1f)
+                    finished = false;
+            }
+
+            if (finished) break;
+            yield return new WaitForFixedUpdate();
+        }
+
+        // Restore the exact saved angle after the animation.
+        if (trailer != null && !trailer.disabled && trailer.NetworknetworkStationary
+            && Instance?.FindJob(trailer) == null)
+            RestoreLauncherElevation(job);
     }
 
     private static float HalfLength(Unit unit)
@@ -615,6 +743,8 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         internal Collider[] TowColliders { get; set; } = Array.Empty<Collider>();
 
         internal bool[] StaysDeployed { get; set; } = Array.Empty<bool>();
+
+        internal Dictionary<Turret, (float Angle, Quaternion PivotRotation)> LauncherElevations { get; } = new();
 
         /// <summary>The pickup spot: <see cref="StagingDistance"/> out from the trailer on the tractor's side.</summary>
         internal void AimPickup()

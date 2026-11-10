@@ -1,5 +1,11 @@
 ﻿# Changelog
 
+## Unreleased
+
+### Fixed
+
+- Fixed BDF StratoLance launcher elevation on deploy.
+
 ## 1.0.0.2
 
 ### Added
