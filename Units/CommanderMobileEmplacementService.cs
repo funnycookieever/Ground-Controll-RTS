@@ -44,6 +44,9 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     private static readonly FieldInfo? ElevationField = AccessTools.Field(typeof(Turret), "elevationAngle");
     private static readonly FieldInfo? ElevationPivotField = AccessTools.Field(typeof(Turret), "elevationTransform");
 
+    // Target elevations of launcher lifts still in progress, so a re-hitch mid-lift captures the target, not the half-raised pose.
+    private static readonly Dictionary<Turret, (float Angle, Quaternion PivotRotation)> PendingLift = new();
+
     private readonly CommanderSelectionService selectionService;
     private readonly List<TowJob> jobs = new();
 
@@ -428,7 +431,11 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
             foreach (Turret turret in station.Turrets)
             {
-                if (turret != null && ElevationField.GetValue(turret) is float angle
+                if (turret != null && PendingLift.TryGetValue(turret, out (float Angle, Quaternion PivotRotation) pending))
+                {
+                    job.LauncherElevations[turret] = pending;
+                }
+                else if (turret != null && ElevationField.GetValue(turret) is float angle
                     && ElevationPivotField?.GetValue(turret) is Transform pivot)
                 {
                     job.LauncherElevations[turret] = (angle, pivot.localRotation);
@@ -455,6 +462,27 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     }
 
     private static System.Collections.IEnumerator FinishUnstow(TowJob job)
+    {
+        // Runs synchronously inside StartCoroutine, so the targets are registered before any re-hitch can happen.
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
+        {
+            PendingLift[entry.Key] = entry.Value;
+        }
+
+        try
+        {
+            yield return LiftLauncher(job);
+        }
+        finally
+        {
+            foreach (Turret turret in job.LauncherElevations.Keys)
+            {
+                PendingLift.Remove(turret);
+            }
+        }
+    }
+
+    private static System.Collections.IEnumerator LiftLauncher(TowJob job)
     {
         GroundVehicle trailer = job.Trailer;
         yield return new WaitForFixedUpdate();
