@@ -415,16 +415,24 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     {
         GroundVehicle trailer = job.Trailer;
         if (ElevationField == null || ElevationPivotField == null || trailer.weaponStations == null)
+        {
             return;
+        }
 
         foreach (WeaponStation station in trailer.weaponStations)
         {
-            if (station?.Turrets == null) continue;
+            if (station?.Turrets == null)
+            {
+                continue;
+            }
+
             foreach (Turret turret in station.Turrets)
             {
                 if (turret != null && ElevationField.GetValue(turret) is float angle
                     && ElevationPivotField?.GetValue(turret) is Transform pivot)
+                {
                     job.LauncherElevations[turret] = (angle, pivot.localRotation);
+                }
             }
         }
     }
@@ -433,10 +441,16 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     {
         foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
         {
-            if (entry.Key == null) continue;
+            if (entry.Key == null)
+            {
+                continue;
+            }
+
             ElevationField?.SetValue(entry.Key, entry.Value.Angle);
             if (ElevationPivotField?.GetValue(entry.Key) is Transform pivot)
+            {
                 pivot.localRotation = entry.Value.PivotRotation;
+            }
         }
     }
 
@@ -447,15 +461,19 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
         if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
             || Instance?.FindJob(trailer) != null)
+        {
             yield break;
+        }
 
         // Retain the folded pose so unstowing does not visibly snap the launcher upright.
-        var folded = new Dictionary<Turret, (float Angle, Quaternion Rotation)>();
-        foreach (var entry in job.LauncherElevations)
+        Dictionary<Turret, (float Angle, Quaternion Rotation)> folded = new();
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
         {
             Turret turret = entry.Key;
             if (turret == null || ElevationPivotField?.GetValue(turret) is not Transform pivot)
+            {
                 continue;
+            }
 
             float angle = ElevationField?.GetValue(turret) is float current
                 ? current : entry.Value.Angle;
@@ -465,12 +483,18 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         trailer.StowTurrets(false);
 
         // Undo any immediate visual pose change caused by StowTurrets(false).
-        foreach (var entry in folded)
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion Rotation)> entry in folded)
         {
-            if (entry.Key == null) continue;
+            if (entry.Key == null)
+            {
+                continue;
+            }
+
             ElevationField?.SetValue(entry.Key, entry.Value.Angle);
             if (ElevationPivotField?.GetValue(entry.Key) is Transform pivot)
+            {
                 pivot.localRotation = entry.Value.Rotation;
+            }
         }
 
         const float liftSpeed = 30f; // Degrees per second.
@@ -479,15 +503,19 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         {
             if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
                 || Instance?.FindJob(trailer) != null)
+            {
                 yield break;
+            }
 
             bool finished = true;
             float step = liftSpeed * Time.fixedDeltaTime;
-            foreach (var entry in job.LauncherElevations)
+            foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
             {
                 Turret turret = entry.Key;
                 if (turret == null || ElevationPivotField?.GetValue(turret) is not Transform pivot)
+                {
                     continue;
+                }
 
                 pivot.localRotation = Quaternion.RotateTowards(
                     pivot.localRotation, entry.Value.PivotRotation, step);
@@ -496,21 +524,31 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
                     float next = Mathf.MoveTowardsAngle(current, entry.Value.Angle, step);
                     ElevationField.SetValue(turret, next);
                     if (Mathf.Abs(Mathf.DeltaAngle(next, entry.Value.Angle)) > 0.1f)
+                    {
                         finished = false;
+                    }
                 }
 
                 if (Quaternion.Angle(pivot.localRotation, entry.Value.PivotRotation) > 0.1f)
+                {
                     finished = false;
+                }
             }
 
-            if (finished) break;
+            if (finished)
+            {
+                break;
+            }
+
             yield return new WaitForFixedUpdate();
         }
 
         // Restore the exact saved angle after the animation.
         if (trailer != null && !trailer.disabled && trailer.NetworknetworkStationary
             && Instance?.FindJob(trailer) == null)
+        {
             RestoreLauncherElevation(job);
+        }
     }
 
     private static float HalfLength(Unit unit)
