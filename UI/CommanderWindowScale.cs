@@ -65,9 +65,19 @@ internal static class CommanderWindowScale
     internal static int Current { get; private set; }
 
     /// <summary>The +/- buttons beside a window's "?": one zoom step, saved like the grip.</summary>
+    /// The window keeps its size on screen and only its contents zoom, so a window that fits its
+    /// own content (MISSIONS) does not grow with it.
     internal static void Step(int id, float delta)
     {
-        Scales[ScaleKey(id)] = Mathf.Clamp(Mathf.Round((Get(id) + delta) * 10f) / 10f, MinScale, MaxScale);
+        float before = Get(id);
+        float after = Mathf.Clamp(Mathf.Round((before + delta) * 10f) / 10f, MinScale, MaxScale);
+        Scales[ScaleKey(id)] = after;
+        if (MinSizes.ContainsKey(id) && Rects.TryGetValue(id, out Rect rect))
+        {
+            Extents[(id, WidthSlot)] = rect.width * before / after;
+            Extents[(id, HeightSlot)] = rect.height * before / after;
+        }
+
         Save();
     }
 

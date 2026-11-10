@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 
@@ -115,6 +115,8 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     /// <summary>Builders the commander keeps; more while its blueprints queue up with nobody on them.</summary>
     private const int MinEnemyBuilders = 2;
     private const int MaxEnemyBuilders = 6;
+    private const int GodMinEnemyBuilders = 5;
+    private const int GodMaxEnemyBuilders = 10;
 
     /// <summary>Hard ceiling on the guns one AI faction fields at once, whatever its plan or balance:
     /// past it every buy path skips artillery, and the guns' upkeep stops growing with them.</summary>
@@ -892,6 +894,19 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
         return supply;
     }
 
+    /// <summary>
+    /// GOD: money is no object, builders are, so it keeps a bigger crew. Under a unit cap both bounds
+    /// stop at the cap's builder share, so the crew never eats the army's slots.
+    /// </summary>
+    private static int GetBuilderBound(FactionHQ hq, bool min)
+    {
+        bool god = IsChampionsMission && CommanderGodService.IsGod(hq);
+        int bound = min ? (god ? GodMinEnemyBuilders : MinEnemyBuilders) : (god ? GodMaxEnemyBuilders : MaxEnemyBuilders);
+        return CommanderUnitCap.Enabled
+            ? Mathf.Min(bound, Mathf.Max(MinEnemyBuilders, CommanderUnitCap.BuilderCap))
+            : bound;
+    }
+
     /// <summary>A repair vehicle, which the builder count owns rather than the convoy's supply count.</summary>
     private static bool IsBuilderVehicle(VehicleDefinition definition)
     {
@@ -1179,14 +1194,18 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
         // commander with none never builds any.
         // No attack force until a base stands near enough to use one: the money saves for buildings
         // and flies. Only what takes neutral bases and the air defence are still bought.
-        bool holdArmy = duel && !CommanderCaptureService.HasForwardBase(hq);
+        // GOD DIFFICULTY's opening holds the convoys too, and the plants it still has to build: aircraft
+        // and air defence fly meanwhile, the attack column comes once the plants stand.
+        bool godOpening = CommanderEconomyService.IsGodOpening(hq);
+        bool holdArmy = (duel && !CommanderCaptureService.HasForwardBase(hq)) || godOpening;
         float reserve = !holdArmy && CountArmy(hq) < ArmyBeforeSaving && CommanderEconomyService.HasEnemyHomeIncome(hq)
             ? 0f
             : GetSavedBuildReserve(hq, state);
 
         // The factory savings are held back whatever the army needs: they are a share of income,
         // not the whole price, so the convoys still get the rest.
-        reserve = Mathf.Min(hq.factionFunds, reserve + CommanderEconomyService.GetEnemyFactoryFund(hq));
+        float godPlants = godOpening ? CommanderEconomyService.GetGodOpeningReserve(hq) : 0f;
+        reserve = Mathf.Min(hq.factionFunds, reserve + CommanderEconomyService.GetEnemyFactoryFund(hq) + godPlants);
         float pot = hq.factionFunds - reserve;
         float warFund = TakeWarFund(hq, state);
         float spendable = Mathf.Max(pot * (duel ? DuelSpendFraction : SpendFraction), warFund);
@@ -1332,7 +1351,7 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
             dearLean = Mathf.Max(dearLean, CappedDearLean);
         }
 
-        int godMultiplier = IsChampionsMission && CommanderGodService.IsGodBudget() ? GodPurchaseMultiplier : 1;
+        int godMultiplier = IsChampionsMission && CommanderGodService.IsGod(hq) ? GodPurchaseMultiplier : 1;
         int purchases = godMultiplier * ScalePurchases(
             duel ? DuelPurchasesPerReview : PurchasesPerReview, GroundPurchasesPerDecade, wealthSteps);
 
@@ -1476,8 +1495,10 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
             }
         }
 
+        int minBuilders = GetBuilderBound(hq, min: true);
+        int maxBuilders = GetBuilderBound(hq, min: false);
         bool waiting = (CommanderEconomyService.Instance?.CountBlueprintsWithoutBuilders(hq) ?? 0) > reserve;
-        int wanted = waiting ? Mathf.Min(MaxEnemyBuilders, Mathf.Max(MinEnemyBuilders, owned + 1)) : MinEnemyBuilders;
+        int wanted = waiting ? Mathf.Min(maxBuilders, Mathf.Max(minBuilders, owned + 1)) : minBuilders;
         float cost = Mathf.Max(0f, builder.value);
         if (owned >= wanted || cost > spendable || !CommanderGameAccess.TrySpend(hq, cost))
         {

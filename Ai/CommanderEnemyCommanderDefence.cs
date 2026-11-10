@@ -1027,10 +1027,19 @@ internal sealed partial class CommanderEnemyCommanderService
 
         // Cached per type: the turret walk allocates, and the ring asks this of every defender
         // several times a review now that launchers are kept out of the ring's counts.
+        // Off the prefab, never the live unit: the walk answers false for a wreck, and the first
+        // unit asked after a base changed hands is often one (EnsureDefencePosts runs before the
+        // prune). Cached, that false turned every StratoLance into a roaming ring spare for the
+        // rest of the match, and the unpinned ones drove off at the player like a convoy.
         if (!SamLauncherTypes.TryGetValue(unit.definition, out bool launcher))
         {
-            launcher = CommanderRadarService.IsRadarGuidedLauncherUncached(unit);
-            SamLauncherTypes[unit.definition] = launcher;
+            launcher = unit.definition is VehicleDefinition definition
+                ? CommanderRadarService.IsRadarGuidedLauncherDefinition(definition)
+                : CommanderRadarService.IsRadarGuidedLauncherUncached(unit);
+            if (!unit.disabled)
+            {
+                SamLauncherTypes[unit.definition] = launcher;
+            }
         }
 
         return launcher;

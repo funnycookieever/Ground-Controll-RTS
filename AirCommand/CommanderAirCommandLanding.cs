@@ -786,7 +786,7 @@ internal sealed partial class CommanderAirCommandService
         Airbase? nearest = FindNearestOwnedAirbase(aircraft, mustFit: true);
         if (nearest == null)
         {
-            SetStatus($"{CommanderGameAccess.GetUnitLabel(aircraft)} has no friendly airbase it can land on.");
+            RefuseNoField(aircraft);
             return false;
         }
 
@@ -817,7 +817,7 @@ internal sealed partial class CommanderAirCommandService
         {
             if (announce)
             {
-                SetStatus($"{CommanderGameAccess.GetUnitLabel(aircraft)} has no friendly airbase it can land on.");
+                RefuseNoField(aircraft);
             }
 
             return false;
@@ -1041,10 +1041,13 @@ internal sealed partial class CommanderAirCommandService
     }
 
     /// <summary>It can land here and leave again. Takeoff alone is not enough: a ski-jump passes that
-    /// test and a takeoff-only strip has nowhere to land.</summary>
+    /// test and a takeoff-only strip has nowhere to land. Overruns do not count: they close a field to
+    /// launches on full tanks, and a resupply there refuels only to the standard load
+    /// (<see cref="GetSafeFuelLevel"/>). Counting them left a Brawler with no field at all for
+    /// RESUPPLY or RESERVE once its only strip had two.</summary>
     private static bool FitsField(Aircraft aircraft, Airbase airbase)
     {
-        return HasTakeoffRunway(airbase, aircraft.definition) && HasLandingRunway(aircraft, airbase);
+        return HasTakeoffRunway(airbase, aircraft.definition, countOverruns: false) && HasLandingRunway(aircraft, airbase);
     }
 
     private static bool IsStandingOn(Aircraft aircraft, Airbase airbase)
@@ -1584,6 +1587,31 @@ internal sealed partial class CommanderAirCommandService
             $"{CommanderGameAccess.GetUnitLabel(aircraft).ToUpperInvariant()} DOWN ON "
                 + CommanderCaptureService.GetAirbaseLabel(airbase).ToUpperInvariant(),
             aircraft);
+    }
+
+    /// <summary>
+    /// RESUPPLY or RESERVE with no field to go to. A banner, not just the status line: that only shows
+    /// in the AIR COMMAND window, so with it closed the button looked dead. Says why the nearest field
+    /// this side holds was turned down.
+    /// </summary>
+    private void RefuseNoField(Aircraft aircraft)
+    {
+        Airbase? closest = FindNearestOwnedAirbase(aircraft);
+        string why;
+        if (closest == null)
+        {
+            why = "your side holds no airbase";
+        }
+        else
+        {
+            string field = CommanderCaptureService.GetAirbaseLabel(closest);
+            why = !HasTakeoffRunway(closest, aircraft.definition, countOverruns: false)
+                ? $"{field} has no runway long enough to take off from (needs {aircraft.GetAircraftParameters().takeoffDistance:0} m)"
+                : $"{field} has no runway it can land on";
+        }
+
+        CommanderPlugin.Log.LogInfo($"{CommanderGameAccess.GetUnitLabel(aircraft)} refused a field: {why}.");
+        RefuseLaunch($"{CommanderGameAccess.GetUnitLabel(aircraft)} has no friendly airbase it can land on: {why}.");
     }
 
     private void ApplyLandingOrder(

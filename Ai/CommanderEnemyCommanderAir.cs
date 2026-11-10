@@ -2339,6 +2339,20 @@ internal sealed partial class CommanderEnemyCommanderService
             }
         }
 
+        // Stock first, whatever the role: it is already paid for. The any-role pass below only runs when
+        // the wanted role cannot be bought, and a commander that can always buy it new (GOD, any rich
+        // one) left its plants' output and every recovered airframe in the hangar all match. A budget
+        // of 0 lets only stocked airframes through. Not in a draft, where everything is stock and the
+        // role pick below is what composes the wing.
+        if (!CommanderDraftService.IsDraftMission && HasAirStock(hq))
+        {
+            float launched = TryBuyRole(hq, state, 0f, null, state.NextStrikeBombs, false, playerForce);
+            if (launched > 0f)
+            {
+                return launched;
+            }
+        }
+
         // A commander several tenfolds past the authored balance never serves the cheap opening: it
         // can replace anything it loses, so the first airframe it buys is already the dear one.
         bool rich = wealthSteps >= DearAirframeDecades;

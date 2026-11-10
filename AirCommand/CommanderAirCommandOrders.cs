@@ -791,7 +791,7 @@ internal sealed partial class CommanderAirCommandService
         if (aircraft.radarAlt > 5f
             && aircraft.pilots != null
             && aircraft.pilots.Length > 0
-            && (aircraft.pilots[0]?.currentState is AIHeloLandingState or AIPilotLandingState
+            && (aircraft.pilots[0]?.currentState is AIHeloLandingState or AIPilotLandingState or AIPilotShortLandingState
                 || IsModdedTransportState(aircraft.pilots[0]?.currentState)))
         {
             ReturnToCombatState(aircraft);

@@ -99,9 +99,13 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
 
     private readonly HashSet<FactionHQ> seededStartingStock = new();
 
-    /// <summary>Depots this player keeps topped up to the order size (AUTO FUEL / AUTO AMMO).</summary>
-    private readonly HashSet<Unit> autoFuel = new();
-    private readonly HashSet<Unit> autoAmmo = new();
+    /// <summary>
+    /// Depots kept topped up (AUTO FUEL / AUTO AMMO): which team set it and the order size to hold.
+    /// The host owns these and does the buying; a guest's copy is the host's, read off the sync, so
+    /// every player on the team sees the same checks.
+    /// </summary>
+    private readonly Dictionary<Unit, (FactionHQ Hq, float Percent)> autoFuel = new();
+    private readonly Dictionary<Unit, (FactionHQ Hq, float Percent)> autoAmmo = new();
 
     private float nextScanAt;
     private float nextAutoBuyAt;
@@ -116,6 +120,7 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         CommanderNetwork.OnHost("supply.buy", HostBuy);
         CommanderNetwork.OnHost("supply.base", HostBuyBase);
         CommanderNetwork.OnHost("supply.load", HostLoadFromDump);
+        CommanderNetwork.OnHost("supply.auto", HostSetAutoBuy);
         CommanderNetwork.OnGuest("supply.done", GuestBought);
         CommanderNetwork.OnSync(SyncFuel);
         CommanderNetwork.OnGuest("supply.fuel", ApplyFuel);
@@ -161,8 +166,10 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
 
     public void TickPersistent()
     {
-        // Each player's own toggles, on their own machine: a guest's buys forward to the host like a click.
-        if ((autoFuel.Count > 0 || autoAmmo.Count > 0) && CommanderScheduler.IsDue(ref nextAutoBuyAt, ScanIntervalSeconds))
+        // The host buys for every team's toggles; a guest's copy is only for showing the checks.
+        if (!CommanderNetwork.IsGuest
+            && (autoFuel.Count > 0 || autoAmmo.Count > 0)
+            && CommanderScheduler.IsDue(ref nextAutoBuyAt, ScanIntervalSeconds))
         {
             AutoBuy(autoFuel, fuel: true);
             AutoBuy(autoAmmo, fuel: false);
@@ -1065,20 +1072,22 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
 
     internal bool IsAutoBuying(Unit depot, bool fuel)
     {
-        return (fuel ? autoFuel : autoAmmo).Contains(depot);
+        return (fuel ? autoFuel : autoAmmo).ContainsKey(depot);
     }
 
     internal void SetAutoBuy(Unit depot, bool fuel, bool on)
     {
-        HashSet<Unit> set = fuel ? autoFuel : autoAmmo;
-        if (on)
+        FactionHQ? hq = CommanderGameAccess.GetLocalHq();
+        if (hq == null
+            || (CommanderNetwork.Forward(
+                    "supply.auto", CommanderNetwork.Id(depot), fuel ? "fuel" : "ammo", CommanderNetwork.Flag(on), CommanderNetwork.Num(PurchasePercent))
+                && !CommanderNetwork.HostHasMod))
         {
-            set.Add(depot);
+            return;
         }
-        else
-        {
-            set.Remove(depot);
-        }
+
+        // On a guest this is the host's answer arriving early, so the check does not wait for the sync.
+        SetAutoBuy(depot, fuel, on, hq, PurchasePercent);
     }
 
     internal bool TryBuyFuel(Unit? store, out string message, float percent = 0f)
@@ -1896,6 +1905,28 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         CommanderNetwork.Reply("supply.done", CommanderNetwork.Id(truck), CommanderNetwork.Flag(loaded), message);
     }
 
+    private void SetAutoBuy(Unit depot, bool fuel, bool on, FactionHQ hq, float percent)
+    {
+        Dictionary<Unit, (FactionHQ Hq, float Percent)> set = fuel ? autoFuel : autoAmmo;
+        if (on)
+        {
+            set[depot] = (hq, ClampPercent(percent));
+        }
+        else
+        {
+            set.Remove(depot);
+        }
+    }
+
+    /// <summary>A guest's AUTO FUEL / AUTO AMMO check, on the host.</summary>
+    private void HostSetAutoBuy(FactionHQ hq, string[] args)
+    {
+        if (CommanderNetwork.TryUnit(args, 1, out Unit depot) && CommanderGameAccess.IsFriendlyUnit(depot, hq))
+        {
+            SetAutoBuy(depot, CommanderNetwork.Arg(args, 2) == "fuel", CommanderNetwork.Bool(args, 3), hq, CommanderNetwork.Float(args, 4));
+        }
+    }
+
     /// <summary>A guest's BUY button, on the host.</summary>
     private void HostBuy(FactionHQ hq, string[] args)
     {
@@ -1949,7 +1980,10 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
             // who joined after that still read the prefab's full shelf.
             Rearmer? rearmer = GetRearmer(scratch[i]);
             float ammo = rearmer != null ? rearmer.Capacity : -1f;
-            args[i + 1] = $"{CommanderNetwork.Id(scratch[i])} {CommanderNetwork.Num(GetFuelKg(scratch[i]))} {CommanderNetwork.Num(ammo)}";
+
+            // Fourth field: the depot's AUTO checks, so the whole team sees who keeps what topped up.
+            string auto = (autoFuel.ContainsKey(scratch[i]) ? "f" : string.Empty) + (autoAmmo.ContainsKey(scratch[i]) ? "a" : string.Empty);
+            args[i + 1] = $"{CommanderNetwork.Id(scratch[i])} {CommanderNetwork.Num(GetFuelKg(scratch[i]))} {CommanderNetwork.Num(ammo)} {(auto.Length == 0 ? "-" : auto)}";
         }
 
         messages.Add(args);
@@ -1960,13 +1994,20 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         for (int i = 1; i < args.Length; i++)
         {
             string[] fields = args[i].Split(' ');
-            if (fields.Length == 3 && CommanderNetwork.TryUnit(fields[0], out Unit store))
+            if (fields.Length == 4 && CommanderNetwork.TryUnit(fields[0], out Unit store))
             {
                 fuel[store] = CommanderNetwork.Float(fields, 1);
                 float ammo = CommanderNetwork.Float(fields, 2);
                 if (ammo >= 0f)
                 {
                     GetRearmer(store)?.SetCapacity(ammo);
+                }
+
+                FactionHQ? hq = CommanderGameAccess.GetLocalHq();
+                if (hq != null)
+                {
+                    SetAutoBuy(store, fuel: true, fields[3].Contains("f"), hq, PurchasePercent);
+                    SetAutoBuy(store, fuel: false, fields[3].Contains("a"), hq, PurchasePercent);
                 }
             }
         }
@@ -2079,25 +2120,37 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
     /// Buys whatever a toggled depot is short of the order size: at 20 % with the shelf on 19 %, 1 %.
     /// A lost or captured depot drops off the list; a refusal (short of funds) waits for the next pass.
     /// </summary>
-    private void AutoBuy(HashSet<Unit> depots, bool fuel)
+    private void AutoBuy(Dictionary<Unit, (FactionHQ Hq, float Percent)> depots, bool fuel)
     {
-        FactionHQ? hq = CommanderGameAccess.GetLocalHq();
-        depots.RemoveWhere(depot => depot == null || depot.disabled || !CommanderGameAccess.IsFriendlyUnit(depot, hq));
-        foreach (Unit depot in depots)
+        List<Unit> gone = new();
+        foreach (KeyValuePair<Unit, (FactionHQ Hq, float Percent)> entry in depots)
         {
+            Unit depot = entry.Key;
+            if (depot == null || depot.disabled || entry.Value.Hq == null || !CommanderGameAccess.IsFriendlyUnit(depot, entry.Value.Hq))
+            {
+                gone.Add(depot!);
+                continue;
+            }
+
             Rearmer? rearmer = fuel ? null : GetRearmer(depot);
             float fill = fuel
                 ? GetFuelKg(depot) / Mathf.Max(1f, GetFuelCapacityKg(depot))
                 : rearmer == null ? 1f : rearmer.Capacity / Mathf.Max(1f, rearmer.GetMaxCapacity());
-            float shortPercent = PurchasePercent - (fill * 100f);
+            float shortPercent = entry.Value.Percent - (fill * 100f);
             if (shortPercent < 0.5f)
             {
                 continue;
             }
 
-            _ = fuel
+            // Bought out of the team that set the check's treasury, the same as its own click.
+            CommanderNetwork.RunAs(entry.Value.Hq, () => _ = fuel
                 ? TryBuyFuel(depot, out _, Mathf.Ceil(shortPercent))
-                : TryBuyAmmo(depot, out _, Mathf.Ceil(shortPercent));
+                : TryBuyAmmo(depot, out _, Mathf.Ceil(shortPercent)));
+        }
+
+        for (int i = 0; i < gone.Count; i++)
+        {
+            depots.Remove(gone[i]);
         }
     }
 

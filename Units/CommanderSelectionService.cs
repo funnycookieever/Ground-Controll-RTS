@@ -31,7 +31,7 @@ internal sealed class CommanderSelectionService : ICommanderActivate, ICommander
         {
             foreach (string id in CommanderNetwork.Arg(args, 1).Split(' '))
             {
-                if (CommanderNetwork.TryUnit(id, out Unit unit) && !unit.disabled && ReferenceEquals(unit.NetworkHQ, hq))
+                if (CommanderNetwork.TryUnit(id, out Unit unit) && !unit.disabled && !IsPlayerAircraft(unit) && ReferenceEquals(unit.NetworkHQ, hq))
                 {
                     unit.DisableUnit();
                 }
@@ -91,7 +91,7 @@ internal sealed class CommanderSelectionService : ICommanderActivate, ICommander
 
             for (int i = 0; i < selectedUnits.Count; i++)
             {
-                if (!CommanderGameAccess.IsFriendlyUnit(selectedUnits[i], localHq))
+                if (!CommanderGameAccess.IsFriendlyUnit(selectedUnits[i], localHq) || IsPlayerAircraft(selectedUnits[i]))
                 {
                     return false;
                 }
@@ -202,6 +202,12 @@ internal sealed class CommanderSelectionService : ICommanderActivate, ICommander
         return !string.IsNullOrWhiteSpace(unit.unitName) ? unit.unitName : unit.name;
     }
 
+    /// <summary>An aircraft a human is flying. Never scrapped: it would kill that player.</summary>
+    internal static bool IsPlayerAircraft(Unit unit)
+    {
+        return unit is Aircraft aircraft && aircraft.Player != null;
+    }
+
     /// <summary>Drops a single unit out of the selection, leaving the rest alone.</summary>
     internal static void DeselectUnit(Unit unit)
     {
@@ -286,7 +292,7 @@ internal sealed class CommanderSelectionService : ICommanderActivate, ICommander
         for (int i = 0; i < unitsToDelete.Count; i++)
         {
             Unit unit = unitsToDelete[i];
-            if (!CommanderGameAccess.IsFriendlyUnit(unit, CommanderGameAccess.GetLocalHq()))
+            if (!CommanderGameAccess.IsFriendlyUnit(unit, CommanderGameAccess.GetLocalHq()) || IsPlayerAircraft(unit))
             {
                 continue;
             }

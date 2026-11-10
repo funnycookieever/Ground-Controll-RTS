@@ -16,6 +16,7 @@
 - A small bar under the income in the top bar shows when the next payout comes.
 - Depot and naval cards show how long each unit takes to build.
 - More windows can be resized, and most windows have - and + buttons in the title bar to zoom them.
+- The TRANSPORT window has a Follow roads on long legs option for helicopters. Off, they fly the straight line to the LZ.
 
 ### Changed
 
@@ -24,11 +25,34 @@
 - New ships and supply stores start full of fuel and ammo.
 - Aircraft landing alone slow down earlier on approach and need less runway, so they go round far less often.
 - The SATURATION ATTACK option for anti-radiation missiles is removed.
+- GOD DIFFICULTY opens by building six aircraft plants, picking the best lines first, and holds its attack convoys and fleet until they stand (10 minutes at most). It builds gold mines straight away, several at once, and keeps a bigger builder crew.
+- The GOD economy only goes to the side players cannot join, so an AI commander on the player's team no longer gets it.
+- AI commanders send airframes already in the hangar before buying new ones.
+- Ground plants cost two of the unit they build, and each upgrade costs the same as the plant. Aircraft plants are priced as before.
+- The MISSIONS window shows idle aircraft under the flying ones in one list, each with its own TASK button, and has zoom buttons.
+- Zooming a window keeps its size on screen and only zooms its contents.
+- AUTO FUEL and AUTO AMMO are run by the host and shared with the whole team, so every player sees the same checks.
+- AI pilots on the bundled maps fly with twice the skill. Champions GOD starts with 15000, lighter weather and higher clouds.
 
 ### Fixed
 
 - Helicopter and VTOL pads count as taken when a unit is standing on them.
 - Destroyed supply stores no longer break warhead stockpiles.
+- AI radar SAM launchers no longer drive off at the player like a convoy after a base changes hands.
+- RESUPPLY and RESERVE with no field to go to show a banner saying why, even with AIR COMMAND closed. Runway overruns no longer count as a field to land and refuel at.
+- A travel point a guest gives a loaded transport is added on the way to the LZ, the same as for the host.
+- Unit condition only counts parts that can disable the unit, so a shot-off control surface or pylon no longer shows it as destroyed.
+- Aircraft flown by a player can no longer be scrapped.
+- The status text in the selection bar stays on one line instead of being cut in half.
+- Helicopters taking off from a carrier climb clear of its island before flying off, instead of often crashing into it.
+- Transport helicopters leaving a carrier no longer give up and crash during the climb, and fly over the carrier's island instead of into it.
+- Munitions bunkers rebuilt from a wreck now keep the warheads an enrichment plant sends them. They used to show 0 for the rest of the match.
+- You can launch transport runs from several airfields or carriers at once. A second order used to wait until the first helicopter had left its hangar, even from another carrier.
+- The TRANSPORT window only lists airfields that can launch the selected aircraft right now.
+- A transport run that has to wait for a free hangar now says so on screen, and one that cannot launch when its turn comes says why, instead of doing nothing.
+- In multiplayer, players who are not hosting see the capture bar on neutral bases again, including the second half of taking an enemy base.
+- Jets given an order while flying home on their own no longer keep circling to land.
+- The autopilot that holds your aircraft while you command follows the terrain, so rising ground no longer flies it into a hill.
 
 ## 1.0.0.1
 

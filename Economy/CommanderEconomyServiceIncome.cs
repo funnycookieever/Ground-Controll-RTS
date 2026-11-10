@@ -250,7 +250,7 @@ internal sealed partial class CommanderEconomyService
     private CommanderBuildKind ChooseEnemyIncomeKind(FactionHQ hq)
     {
         // The balance and the starter gate are both about affording a mine, which a free one skips.
-        if (HasFreeMine(hq))
+        if (HasFreeMine(hq) || IsGodEconomy(hq))
         {
             return CommanderBuildKind.Mine;
         }
@@ -292,6 +292,11 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private bool IsEnemyMineOpen(FactionHQ hq)
     {
+        if (IsGodEconomy(hq))
+        {
+            return true;
+        }
+
         int maxed = 0;
         foreach (KeyValuePair<Unit, int> entry in incomeLevels)
         {

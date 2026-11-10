@@ -54,7 +54,6 @@ internal sealed partial class CommanderAirCommandUi
     /// </summary>
     private float requiredHeight = 900f;
     private bool helpVisible;
-    private bool showIdleAircraft;
     private Rect missionWindowRect;
     private Vector2 missionScroll;
     private bool missionPositionInitialized;

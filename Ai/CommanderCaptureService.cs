@@ -2082,7 +2082,12 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
                     return (1f - capture.controlBalance) * 0.5f;
                 }
 
-                return capture.capturingHQ != null ? 0.5f + (capture.controlBalance * 0.5f) : 0f;
+                // capturingHQ is server-only (not a SyncVar), so a guest always reads it null and lost
+                // this half of the bar. A neutral base's balance is only above 0 while somebody is
+                // taking it (the server zeroes it when the capture stops), so the balance alone says it.
+                return capture.capturingHQ != null || capture.controlBalance > 0f
+                    ? 0.5f + (capture.controlBalance * 0.5f)
+                    : 0f;
             }
         }
 
@@ -2102,6 +2107,24 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         internal string Label => GetAirbaseLabel(Airbase);
 
         internal GlobalPosition HoldPoint => GetHoldPoint(Airbase);
+
+        /// <summary>
+        /// Whether <paramref name="hq"/> is the side taking this base. A held base is being taken off
+        /// its owner, which is us (the target list never holds our own bases). A guest cannot see
+        /// <c>capturingHQ</c>, so on a neutral base it goes by whether our units were sent there.
+        /// </summary>
+        internal bool IsCapturedBy(FactionHQ? hq)
+        {
+            if (Airbase == null || Airbase.CurrentHQ != null)
+            {
+                return true;
+            }
+
+            FactionHQ? capturing = CapturingHq;
+            return capturing != null
+                ? ReferenceEquals(capturing, hq)
+                : Instance?.HasCaptureOrder(Airbase) != false;
+        }
     }
 
     private sealed class EnemyDrive

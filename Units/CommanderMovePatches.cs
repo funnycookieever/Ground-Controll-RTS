@@ -152,7 +152,7 @@ internal static class CommanderMovePatches
         private static readonly AccessTools.FieldRef<Turret, Unit> TurretAttachedUnit =
             AccessTools.FieldRefAccess<Turret, Unit>("attachedUnit");
 
-        private static readonly System.Collections.Generic.HashSet<string> Logged = new();
+        private static readonly HashSet<string> Logged = new();
 
         internal static bool Prefix(Turret __instance)
         {

@@ -12,6 +12,7 @@ internal static class CommanderGameAccess
     private static readonly FieldInfo? UnitMarkerField = AccessTools.Field(typeof(CombatHUD), "unitMarker");
     private static readonly FieldInfo? OnFollowingUnitSetField = AccessTools.Field(typeof(CameraStateManager), "onFollowingUnitSet");
     private static readonly FieldInfo? VehicleDepotSpawnTransformField = AccessTools.Field(typeof(VehicleDepot), "spawnTransform");
+    private static readonly AccessTools.FieldRef<UnitPart, bool> UnitPartCriticalRef = AccessTools.FieldRefAccess<UnitPart, bool>("criticalPart");
     private static readonly MethodInfo? ServerSetDestinationMethod = AccessTools.Method(typeof(UnitCommand), "ServerSetDestination");
     private static readonly List<VehicleDefinition> RepairVehicleScratch = new();
     private static readonly Dictionary<Faction, VehicleDefinition> RepairVehicleByFaction = new();
@@ -890,8 +891,9 @@ internal static class CommanderGameAccess
     }
 
     /// <summary>
-    /// Condition 0-1, taken from the worst-off part on the unit. Parts start at 100 hit points,
-    /// so this is the same number the Basegame damage model works from.
+    /// Condition 0-1, taken from the worst-off critical part on the unit. Parts start at 100 hit
+    /// points, and Basegame only disables a unit when a critical part reaches 0 — non-critical
+    /// parts (control surfaces, pylons, ship turrets) can be shot off and the unit carries on.
     /// </summary>
     internal static float GetUnitCondition(Unit? unit)
     {
@@ -904,15 +906,17 @@ internal static class CommanderGameAccess
         List<DamageablePart> parts = unit.damageables;
         for (int i = 0; i < parts.Count; i++)
         {
+            if (parts[i].Damageable is not UnitPart part || !UnitPartCriticalRef(part))
+            {
+                continue;
+            }
+
             if (parts[i].Removed)
             {
                 return 0f;
             }
 
-            if (parts[i].Damageable is UnitPart part)
-            {
-                worst = Mathf.Min(worst, Mathf.Clamp01(part.hitPoints * 0.01f));
-            }
+            worst = Mathf.Min(worst, Mathf.Clamp01(part.hitPoints * 0.01f));
         }
 
         return worst;

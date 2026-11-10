@@ -83,6 +83,11 @@ internal sealed partial class CommanderEconomyService
 
     private static int CountFactories(FactionHQ hq)
     {
+        return CountBuiltFactories(hq) + CountBlueprints(hq, CommanderBuildKind.Factory);
+    }
+
+    private static int CountBuiltFactories(FactionHQ hq)
+    {
         int count = 0;
         Factory[] factories = GetFactories();
         for (int i = 0; i < factories.Length; i++)
@@ -94,7 +99,7 @@ internal sealed partial class CommanderEconomyService
             }
         }
 
-        return count + CountBlueprints(hq, CommanderBuildKind.Factory);
+        return count;
     }
 
     private static void ConsiderFactoryKind(
@@ -130,7 +135,7 @@ internal sealed partial class CommanderEconomyService
     private float GetEnemyFactoryReserve(FactionHQ hq)
     {
         UnitDefinition? production = TryPickEnemyFactory(hq, out _, out List<UnitDefinition>? options)
-            ? ChooseEnemyProduction(options!)
+            ? ChooseEnemyProduction(hq, options!)
             : null;
         return production == null ? 0f : GetFactoryBuildCost(production);
     }
@@ -143,7 +148,7 @@ internal sealed partial class CommanderEconomyService
             return false;
         }
 
-        UnitDefinition? production = ChooseEnemyProduction(options!);
+        UnitDefinition? production = ChooseEnemyProduction(hq, options!);
         BuildingDefinition? plant = production == null ? null : ResolveFactoryDefinition(production);
         return production != null
             && plant != null
@@ -217,6 +222,9 @@ internal sealed partial class CommanderEconomyService
         // MaxFactoryBases have any, and the next plant goes to the base with the fewest, so the few
         // spread their lines between them.
         int maxFactoryBases = Mathf.Clamp((bases + 1) / 2, 1, MaxFactoryBases);
+
+        // GOD: the opening plants are all aircraft lines, the ground and the fleet come after.
+        bool airOnly = IsGodEconomy(hq) && kinds.Air.Count > 0 && CountFactories(hq) < GodEnemyFactoryTarget;
         int fewestPlants = int.MaxValue;
         foreach ((GlobalPosition center, int ground, int air, int naval) in factoryBaseScratch)
         {
@@ -233,14 +241,18 @@ internal sealed partial class CommanderEconomyService
             ConsiderFactoryKind(kinds.Air, air, CommanderUnitCap.FactoriesPerBase(EnemyAirFactoriesPerBase), ref baseOptions, ref fewest);
 
             // Ground plants wait with the army, for a base near enough to attack from.
-            if (CommanderCaptureService.HasForwardBase(hq))
+            if (!airOnly && CommanderCaptureService.HasForwardBase(hq))
             {
                 ConsiderFactoryKind(
                     kinds.Ground, ground, CommanderUnitCap.FactoriesPerBase(EnemyGroundFactoriesPerBase), ref baseOptions, ref fewest);
             }
 
-            ConsiderFactoryKind(
-                kinds.Naval, naval, CommanderUnitCap.FactoriesPerBase(EnemyNavalFactoriesPerBase), ref baseOptions, ref fewest);
+            if (!airOnly)
+            {
+                ConsiderFactoryKind(
+                    kinds.Naval, naval, CommanderUnitCap.FactoriesPerBase(EnemyNavalFactoriesPerBase), ref baseOptions, ref fewest);
+            }
+
             if (baseOptions != null)
             {
                 options = baseOptions;
@@ -318,8 +330,10 @@ internal sealed partial class CommanderEconomyService
     /// meant funds never rose past the cheapest, since the unit spender takes the rest every review,
     /// so nearly every plant was a Cricket line.
     /// </summary>
-    private UnitDefinition? ChooseEnemyProduction(List<UnitDefinition> options)
+    private UnitDefinition? ChooseEnemyProduction(FactionHQ hq, List<UnitDefinition> options)
     {
+        // GOD: price is no object, so the best new line first rather than the cheapest.
+        bool god = IsGodEconomy(hq);
         UnitDefinition? fresh = null;
         UnitDefinition? dearest = null;
         for (int i = 0; i < options.Count; i++)
@@ -338,7 +352,8 @@ internal sealed partial class CommanderEconomyService
                 dearest = candidate;
             }
 
-            if (!enemyFactoryProducts.Contains(candidate) && (fresh == null || cost < GetFactoryBuildCost(fresh)))
+            if (!enemyFactoryProducts.Contains(candidate)
+                && (fresh == null || (god ? cost > GetFactoryBuildCost(fresh) : cost < GetFactoryBuildCost(fresh))))
             {
                 fresh = candidate;
             }

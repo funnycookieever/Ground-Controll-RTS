@@ -649,21 +649,29 @@ internal static class CommanderUiTheme
             visible = !visible;
         }
 
-        int id = CommanderWindowScale.Current;
-        if (id != 0)
-        {
-            if (GUI.Button(new Rect(windowWidth - 118f, 3f, 26f, 22f), new GUIContent("-", "Zoom this window out."), HelpButton))
-            {
-                CommanderWindowScale.Step(id, -0.1f);
-            }
+        DrawZoomButtons(windowWidth - 62f);
+        return visible;
+    }
 
-            if (GUI.Button(new Rect(windowWidth - 90f, 3f, 26f, 22f), new GUIContent("+", "Zoom this window in."), HelpButton))
-            {
-                CommanderWindowScale.Step(id, 0.1f);
-            }
+    /// <summary>The - and + title-bar buttons, ending left of <paramref name="right"/> (the next button's x).</summary>
+    internal static void DrawZoomButtons(float right)
+    {
+        Ensure();
+        int id = CommanderWindowScale.Current;
+        if (id == 0)
+        {
+            return;
         }
 
-        return visible;
+        if (GUI.Button(new Rect(right - 56f, 3f, 26f, 22f), new GUIContent("-", "Zoom this window out."), HelpButton))
+        {
+            CommanderWindowScale.Step(id, -0.1f);
+        }
+
+        if (GUI.Button(new Rect(right - 28f, 3f, 26f, 22f), new GUIContent("+", "Zoom this window in."), HelpButton))
+        {
+            CommanderWindowScale.Step(id, 0.1f);
+        }
     }
 
     /// <summary>
@@ -698,6 +706,24 @@ internal static class CommanderUiTheme
         int restore = Shrink(style, rect, new GUIContent(text));
         GUI.Label(rect, text, style);
         style.fontSize = restore;
+    }
+
+    /// <summary><see cref="FitLabel"/> held to one line: shrinks to fit the width, never wraps.</summary>
+    internal static void FitLineLabel(Rect rect, string text, GUIStyle style)
+    {
+        Ensure();
+        int restore = style.fontSize;
+        bool wrap = style.wordWrap;
+        style.wordWrap = false;
+        GUIContent content = new(text);
+        while (style.fontSize > 9 && style.CalcSize(content).x > rect.width)
+        {
+            style.fontSize--;
+        }
+
+        GUI.Label(rect, content, style);
+        style.fontSize = restore;
+        style.wordWrap = wrap;
     }
 
     /// <summary>Button at the largest font size whose label still fits <paramref name="rect"/>.</summary>

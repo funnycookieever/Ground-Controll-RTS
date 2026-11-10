@@ -227,8 +227,8 @@ internal static class CommanderSettings
     /// parity mine leaves it poorer than the player over a long match. CHALLENGING only.</summary>
     internal static float EnemyMineIncomeMultiplier { get => Get("Economy", "EnemyMineIncomeMultiplier", 1.5f); set => Set("Economy", "EnemyMineIncomeMultiplier", value); }
 
-    // A factory's price is FactoryBuildCost scaled by its product's value against this reference, so
-    // a tank plant costs more than a light-carrier plant. Roughly the middle of a faction's roster.
+    // An aircraft plant's price is FactoryBuildCost scaled by its product's value against this reference.
+    // Ground plants ignore it: they cost a fixed number of their product. Roughly the middle of a roster.
     internal static float FactoryProductReferenceValue { get => Get("Economy", "FactoryProductReferenceValue", 8f); set => Set("Economy", "FactoryProductReferenceValue", value); }
 
     internal static float FactoryProductionSeconds { get => Get("Economy", "FactoryProductionSeconds", 240f); set => Set("Economy", "FactoryProductionSeconds", value); }

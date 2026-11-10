@@ -246,7 +246,10 @@ internal sealed partial class CommanderSupplyHeliService
             {
                 Vector3 sample = from + (step * d);
                 sample.y = Datum.LocalSeaY + 5000f;
-                if (Physics.SphereCast(sample, ScanRadiusMeters, Vector3.down, out RaycastHit hit, 10000f, PhysicsLayers.StaticsMask, QueryTriggerInteraction.Ignore))
+
+                // Ships too: off a carrier the cruise hold is radar altitude over the deck, under the
+                // island, and Ibises flew into their own carrier (Leviathan, 2026-11-06).
+                if (Physics.SphereCast(sample, ScanRadiusMeters, Vector3.down, out RaycastHit hit, 10000f, PhysicsLayers.StaticsMask | PhysicsLayers.ShipsMask, QueryTriggerInteraction.Ignore))
                 {
                     bool terrain = GameAssets.i != null && hit.collider.sharedMaterial == GameAssets.i.terrainMaterial;
                     top = Mathf.Max(top, hit.point.ToGlobalPosition().y + (terrain ? 0f : StructureMarginMeters));

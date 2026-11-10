@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
@@ -32,6 +32,11 @@ internal static class CommanderRepairRatePatches
     private static readonly HashSet<UnitDefinition> ReportedRepairTimes = new();
 
     private static readonly List<Hangar> HangarBuffer = new();
+
+    private static readonly List<WarheadStorage> StorageBuffer = new();
+
+    private static readonly AccessTools.FieldRef<WarheadStorage, bool> StorageSelfDisabledRef =
+        AccessTools.FieldRefAccess<WarheadStorage, bool>("selfDisabled");
 
     [HarmonyPrefix]
     internal static void Prefix(Building __instance, ref float strength)
@@ -78,6 +83,18 @@ internal static class CommanderRepairRatePatches
         }
 
         HangarBuffer.Clear();
+
+        __instance.GetComponentsInChildren(true, StorageBuffer);
+        foreach (WarheadStorage storage in StorageBuffer)
+        {
+            if (StorageSelfDisabledRef(storage))
+            {
+                StorageSelfDisabledRef(storage) = false;
+                storage.Repair();
+            }
+        }
+
+        StorageBuffer.Clear();
     }
 
     /// <summary>

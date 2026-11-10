@@ -48,49 +48,29 @@ internal sealed partial class CommanderAirCommandUi
             return;
         }
 
+        CommanderUiTheme.DrawZoomButtons(missionWindowRect.width - 30f);
         float y = 34f;
-        float tabWidth = (missionWindowRect.width - 26f) * 0.5f;
-        if (GUI.Button(
-            new Rect(10f, y, tabWidth, 26f),
-            $"ACTIVE ({missionAircraft.Count})",
-            showIdleAircraft ? CommanderUiTheme.Button : CommanderUiTheme.SelectedButton))
-        {
-            showIdleAircraft = false;
-            missionScroll = Vector2.zero;
-        }
-
-        if (GUI.Button(
-            new Rect(16f + tabWidth, y, tabWidth, 26f),
-            $"IDLE ({idleAircraft.Count})",
-            showIdleAircraft ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
-        {
-            showIdleAircraft = true;
-            missionScroll = Vector2.zero;
-        }
-
-        y += 32f;
 
         // The window is as tall as its list, and says so when there is nothing in it.
-        int listed = showIdleAircraft ? idleAircraft.Count : missionAircraft.Count;
-        missionContentHeight = y + (Mathf.Max(1, listed) * 58f) + 16f + (showIdleAircraft ? 0f : MissionFooterHeight());
-        if (listed == 0)
+        if (missionAircraft.Count == 0 && idleAircraft.Count == 0)
         {
             GUI.Label(
                 new Rect(12f, y + 4f, missionWindowRect.width - 24f, 44f),
-                showIdleAircraft ? "No aircraft waiting for a task." : "Nothing flying. Launch a sortie from AIR.",
+                "Nothing flying. Launch a sortie from AIR.",
                 CommanderUiTheme.MutedLabel);
             missionContentHeight = y + 60f;
             GUI.DragWindow(new Rect(0f, 0f, missionWindowRect.width, 28f));
             return;
         }
 
-        if (showIdleAircraft)
+        if (idleAircraft.Count > 0)
         {
-            DrawIdleAircraft(y);
-            CommanderUiTheme.DrawTooltip(new Rect(0f, 0f, missionWindowRect.width, missionWindowRect.height));
-            GUI.DragWindow(new Rect(0f, 0f, missionWindowRect.width, 28f));
-            return;
+            DrawTaskAsButton(y);
+            y += 38f;
         }
+
+        float listHeight = (missionAircraft.Count * 58f) + (idleAircraft.Count * 42f);
+        missionContentHeight = y + listHeight + 16f + MissionFooterHeight();
 
         Aircraft? selectedAircraft = null;
         for (int i = 0; i < missionAircraft.Count; i++)
@@ -104,7 +84,7 @@ internal sealed partial class CommanderAirCommandUi
 
         float footerHeight = selectedAircraft != null ? MissionFooterHeight() : 0f;
         Rect view = new(10f, y, missionWindowRect.width - 20f, missionWindowRect.height - y - 12f - footerHeight);
-        Rect inner = new(0f, 0f, view.width - 18f, Mathf.Max(view.height, (missionAircraft.Count * 58f) + 4f));
+        Rect inner = new(0f, 0f, view.width - 18f, Mathf.Max(view.height, listHeight + 4f));
         missionScroll = GUI.BeginScrollView(view, missionScroll, inner);
         bool oldEnabled = GUI.enabled;
         for (int i = 0; i < missionAircraft.Count; i++)
@@ -143,6 +123,30 @@ internal sealed partial class CommanderAirCommandUi
                 CommanderUiTheme.Button))
             {
                 service.ReserveAircraft(aircraft);
+            }
+
+            GUI.enabled = oldEnabled;
+        }
+
+        // Idle aircraft follow the flying ones in the same list, each with its own TASK.
+        float idleTop = 2f + (missionAircraft.Count * 58f);
+        for (int i = 0; i < idleAircraft.Count; i++)
+        {
+            Aircraft aircraft = idleAircraft[i];
+            float rowY = idleTop + (i * 42f);
+            if (GUI.Button(
+                new Rect(2f, rowY, inner.width - 70f, 36f),
+                CommanderGameAccess.GetUnitLabel(aircraft),
+                CommanderUiTheme.Button))
+            {
+                CommanderSelectionService.Instance?.SelectUnit(aircraft, false);
+                CommanderCameraFollowService.Instance?.FocusSelection();
+            }
+
+            GUI.enabled = oldEnabled && !service.AwaitingAreaSelection;
+            if (GUI.Button(new Rect(inner.width - 66f, rowY, 64f, 36f), "TASK", CommanderUiTheme.PrimaryButton))
+            {
+                service.BeginAdoption(aircraft);
             }
 
             GUI.enabled = oldEnabled;
@@ -246,12 +250,11 @@ internal sealed partial class CommanderAirCommandUi
     }
 
     /// <summary>
-    /// Aircraft that are already in the world and still flying their own orders. TASK applies the
-    /// mission type picked right here: an area mode asks for a circle, AUTOPILOT releases it to the
+    /// What TASK gives an idle aircraft: an area mode asks for a circle, AUTOPILOT releases it to the
     /// game's AI, and STANDBY sends it to its nearest field to sit down. The picker is the same
     /// choice as AIR COMMAND's mission row, shown here because that window may well be closed.
     /// </summary>
-    private void DrawIdleAircraft(float y)
+    private void DrawTaskAsButton(float y)
     {
         CommanderAirCommandService.AirCommandMode mode = service.SelectedMode;
         int current = System.Array.IndexOf(TaskModes, mode);
@@ -264,35 +267,5 @@ internal sealed partial class CommanderAirCommandUi
         {
             service.SelectMode(TaskModes[(current + 1) % TaskModes.Length]);
         }
-
-        y += 38f;
-
-        Rect view = new(10f, y, missionWindowRect.width - 20f, missionWindowRect.height - y - 12f);
-        Rect inner = new(0f, 0f, view.width - 18f, Mathf.Max(view.height, (idleAircraft.Count * 42f) + 4f));
-        missionScroll = GUI.BeginScrollView(view, missionScroll, inner);
-        bool oldEnabled = GUI.enabled;
-        for (int i = 0; i < idleAircraft.Count; i++)
-        {
-            Aircraft aircraft = idleAircraft[i];
-            float rowY = 2f + (i * 42f);
-            if (GUI.Button(
-                new Rect(2f, rowY, inner.width - 70f, 36f),
-                CommanderGameAccess.GetUnitLabel(aircraft),
-                CommanderUiTheme.Button))
-            {
-                CommanderSelectionService.Instance?.SelectUnit(aircraft, false);
-                CommanderCameraFollowService.Instance?.FocusSelection();
-            }
-
-            GUI.enabled = oldEnabled && !service.AwaitingAreaSelection;
-            if (GUI.Button(new Rect(inner.width - 66f, rowY, 64f, 36f), "TASK", CommanderUiTheme.PrimaryButton))
-            {
-                service.BeginAdoption(aircraft);
-            }
-
-            GUI.enabled = oldEnabled;
-        }
-
-        GUI.EndScrollView();
     }
 }

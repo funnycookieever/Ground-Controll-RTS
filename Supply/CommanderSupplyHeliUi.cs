@@ -650,7 +650,7 @@ internal sealed class CommanderSupplyHeliUi
 
         if (service.SelectedAirbase == null)
         {
-            return "No departure airbase.";
+            return "No airfield can launch it right now.";
         }
 
         return !aircraft.Rotary && !service.SelectedCargoSupportsAirdrop

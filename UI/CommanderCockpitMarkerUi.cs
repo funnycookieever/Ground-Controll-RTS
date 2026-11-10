@@ -165,7 +165,7 @@ internal static class CommanderCockpitMarkerUi
                 continue;
             }
 
-            bool ours = target.CapturingHq == null || ReferenceEquals(target.CapturingHq, hq);
+            bool ours = target.IsCapturedBy(hq);
             string label = $"{(ours ? "CAPTURING" : "ENEMY CAPTURING")}  {target.Label.ToUpperInvariant()}  "
                 + $"{Mathf.RoundToInt(target.CaptureProgress * 100f)}%  {Distance(eye, target.HoldPoint)}";
             DrawTracked(camera, target.HoldPoint, label, ours ? CapturingColor : LosingColor, 34f, clampToEdge: false);

@@ -82,8 +82,12 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
     private readonly Dictionary<Autopilot, Aircraft> assignedAutopilotAircraft = new();
     private readonly HashSet<Aircraft> pendingTerrainAutopilotBindings = new();
     private readonly HashSet<Unit> pendingSamCargoDeposits = new();
+
+    // One per airfield, not one for the whole service: a carrier's spawn waits on its elevator doors,
+    // and a single slot held every other carrier's launch back until that one aircraft appeared.
+    private readonly List<PendingAircraftSpawn> pendingAircraftSpawns = new();
+
     private PendingTargetSelection? pendingTargetSelection;
-    private PendingAircraftSpawn? pendingAircraftSpawn;
     private float terrainClearanceMeters = 250f;
     private bool airdropDelivery;
     private bool uiVisible;
@@ -192,11 +196,15 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
     {
         BindPendingTerrainAutopilots();
 
-        if (pendingAircraftSpawn != null && Time.unscaledTime > pendingAircraftSpawn.ExpiresAt)
+        for (int i = pendingAircraftSpawns.Count - 1; i >= 0; i--)
         {
-            CommanderPlugin.Log.LogWarning($"Supply cargo run assignment timed out: aircraft={pendingAircraftSpawn.Definition.name}");
-            NotifySamMissionFailed(pendingAircraftSpawn.SupportSummary);
-            pendingAircraftSpawn = null;
+            PendingAircraftSpawn pending = pendingAircraftSpawns[i];
+            if (Time.unscaledTime > pending.ExpiresAt)
+            {
+                CommanderPlugin.Log.LogWarning($"Supply cargo run assignment timed out: aircraft={pending.Definition.name}");
+                NotifySamMissionFailed(pending.SupportSummary);
+                pendingAircraftSpawns.RemoveAt(i);
+            }
         }
 
         if (CommanderScheduler.IsDue(ref nextAirbaseRefreshAt, 1f))
@@ -231,7 +239,7 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
         pendingTerrainAutopilotBindings.Clear();
         pendingSamCargoDeposits.Clear();
         pendingTargetSelection = null;
-        pendingAircraftSpawn = null;
+        pendingAircraftSpawns.Clear();
         pendingLzAircraft = null;
         uiVisible = false;
         cargoRosterLogged = false;
@@ -495,11 +503,7 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
             IssueSupplyReturnToBase(entry.Key, mission);
         }
 
-        if (pendingAircraftSpawn != null
-            && SupportSummaryMatchesSite(pendingAircraftSpawn.SupportSummary, siteId))
-        {
-            pendingAircraftSpawn = null;
-        }
+        pendingAircraftSpawns.RemoveAll(pending => SupportSummaryMatchesSite(pending.SupportSummary, siteId));
 
         int queuedCount = queuedCargoSpawns.Count;
         for (int i = 0; i < queuedCount; i++)
@@ -1483,6 +1487,26 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
         return true;
     }
 
+    /// <summary>Can launch this airframe right now: a hangar is open and no run of ours is still
+    /// waiting to come out of this field.</summary>
+    private bool IsFreeAirbase(Airbase? airbase, FactionHQ hq, AircraftDefinition definition)
+    {
+        return IsAvailableAirbase(airbase, hq, definition) && !HasPendingSpawnAt(airbase!);
+    }
+
+    private bool HasPendingSpawnAt(Airbase airbase)
+    {
+        for (int i = 0; i < pendingAircraftSpawns.Count; i++)
+        {
+            if (ReferenceEquals(pendingAircraftSpawns[i].OriginAirbase, airbase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void RefreshAirbaseOptions()
     {
         Airbase? previousSelection = SelectedAirbase;
@@ -1500,15 +1524,17 @@ internal sealed partial class CommanderSupplyHeliService : ICommanderActivate, I
         Vector3 cameraPosition = camera != null ? camera.transform.position : Vector3.zero;
         foreach (Airbase airbase in hq.GetAirbases())
         {
-            if (!IsCompatibleAirbase(airbase, hq, aircraft.Definition))
+            // Only fields that can launch it now (user's rule, 2026-11-06): a busy one listed as WAIT
+            // took the order and then sat on it.
+            if (!IsCompatibleAirbase(airbase, hq, aircraft.Definition)
+                || !IsFreeAirbase(airbase, hq, aircraft.Definition))
             {
                 continue;
             }
 
             Transform positionTransform = airbase.center != null ? airbase.center : airbase.transform;
             float distance = Vector3.Distance(cameraPosition, positionTransform.position);
-            bool ready = IsAvailableAirbase(airbase, hq, aircraft.Definition);
-            airbaseOptions.Add(new AirbaseOption(airbase, GetAirbaseLabel(airbase), distance, ready));
+            airbaseOptions.Add(new AirbaseOption(airbase, GetAirbaseLabel(airbase), distance, true));
         }
 
         airbaseOptions.Sort((a, b) => a.Distance.CompareTo(b.Distance));

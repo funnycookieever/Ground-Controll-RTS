@@ -49,50 +49,6 @@ internal sealed partial class CommanderSupplyHeliService
         return mission.JacknifeSiteId;
     }
 
-    private static Airbase? ResolveSpawnAirbase(QueuedCargoSpawn request, FactionHQ hq)
-    {
-        bool protectedSamRun = RequiresProtectedSamAirbase(request.SupportSummary);
-        if (IsAvailableAirbase(request.RequestedAirbase, hq, request.Aircraft.Definition)
-            && (!protectedSamRun
-                || !request.UseOtherAirfields
-                || IsSamSupplyAirbaseSafe(request.RequestedAirbase, request.Target)))
-        {
-            return request.RequestedAirbase;
-        }
-
-        if (!request.UseOtherAirfields)
-        {
-            return null;
-        }
-
-        Camera? camera = SceneSingleton<CameraStateManager>.i?.mainCamera;
-        Vector3 cameraPosition = camera != null ? camera.transform.position : Vector3.zero;
-        Airbase? nearest = null;
-        float nearestDistance = float.MaxValue;
-        foreach (Airbase candidate in hq.GetAirbases())
-        {
-            if (!IsAvailableAirbase(candidate, hq, request.Aircraft.Definition))
-            {
-                continue;
-            }
-
-            if (protectedSamRun && !IsSamSupplyAirbaseSafe(candidate, request.Target))
-            {
-                continue;
-            }
-
-            Transform positionTransform = candidate.center != null ? candidate.center : candidate.transform;
-            float distance = Vector3.SqrMagnitude(positionTransform.position - cameraPosition);
-            if (distance < nearestDistance)
-            {
-                nearest = candidate;
-                nearestDistance = distance;
-            }
-        }
-
-        return nearest;
-    }
-
     private static void IssueSupplyReturnToBase(Aircraft? aircraft, CargoMission mission)
     {
         if (aircraft == null || aircraft.disabled || aircraft.pilots == null)
@@ -729,6 +685,50 @@ internal sealed partial class CommanderSupplyHeliService
         return false;
     }
 
+    private Airbase? ResolveSpawnAirbase(QueuedCargoSpawn request, FactionHQ hq)
+    {
+        bool protectedSamRun = RequiresProtectedSamAirbase(request.SupportSummary);
+        if (IsFreeAirbase(request.RequestedAirbase, hq, request.Aircraft.Definition)
+            && (!protectedSamRun
+                || !request.UseOtherAirfields
+                || IsSamSupplyAirbaseSafe(request.RequestedAirbase, request.Target)))
+        {
+            return request.RequestedAirbase;
+        }
+
+        if (!request.UseOtherAirfields)
+        {
+            return null;
+        }
+
+        Camera? camera = SceneSingleton<CameraStateManager>.i?.mainCamera;
+        Vector3 cameraPosition = camera != null ? camera.transform.position : Vector3.zero;
+        Airbase? nearest = null;
+        float nearestDistance = float.MaxValue;
+        foreach (Airbase candidate in hq.GetAirbases())
+        {
+            if (!IsFreeAirbase(candidate, hq, request.Aircraft.Definition))
+            {
+                continue;
+            }
+
+            if (protectedSamRun && !IsSamSupplyAirbaseSafe(candidate, request.Target))
+            {
+                continue;
+            }
+
+            Transform positionTransform = candidate.center != null ? candidate.center : candidate.transform;
+            float distance = Vector3.SqrMagnitude(positionTransform.position - cameraPosition);
+            if (distance < nearestDistance)
+            {
+                nearest = candidate;
+                nearestDistance = distance;
+            }
+        }
+
+        return nearest;
+    }
+
     private void SpawnCargoRun(
         CargoAircraftOption aircraftOption,
         Loadout cargoLoadout,
@@ -785,13 +785,25 @@ internal sealed partial class CommanderSupplyHeliService
             followRoads);
         Airbase? spawnAirbase = ResolveSpawnAirbase(request, hq!);
         if (spawnAirbase == null
-            || pendingAircraftSpawn != null
             || IsSamHelipadBusy(request))
         {
             queuedCargoSpawns.Enqueue(request);
             SetStatus(useOtherAirfields
                 ? $"Supply run queued. Waiting for a compatible friendly airfield ({queuedCargoSpawns.Count} queued)."
                 : $"Supply run queued for {GetAirbaseLabel(airbase)} ({queuedCargoSpawns.Count} queued).");
+
+            // A queued run used to say so only in the grey footer, which read as a dead button. A
+            // hangar stays shut until the aircraft it last launched has moved off its spawn spot
+            // (Hangar.WaitForUnitToLeave), so a helicopter parked on a carrier elevator holds it.
+            string why = IsSamHelipadBusy(request)
+                ? "the previous supply aircraft is still launching"
+                : $"every hangar that launches the {aircraftOption.Label} is busy or blocked by an aircraft on its spawn spot";
+            if (!IsSamSiteRun(request.SupportSummary))
+            {
+                CommanderNotice.Fail($"Supply run queued: {why}. It launches when one frees up.");
+            }
+
+            CommanderPlugin.Log.LogInfo($"Cargo run queued: {aircraftOption.Label} from {GetAirbaseLabel(airbase)}, {why}.");
             return;
         }
 
@@ -825,7 +837,7 @@ internal sealed partial class CommanderSupplyHeliService
 
     private void TryProcessQueuedCargoSpawns()
     {
-        if (pendingAircraftSpawn != null || queuedCargoSpawns.Count == 0)
+        if (queuedCargoSpawns.Count == 0)
         {
             return;
         }
@@ -1043,7 +1055,8 @@ internal sealed partial class CommanderSupplyHeliService
         float airframeCost = fromStock ? 0f : CommanderEconomyService.PriceOf(aircraftOption.Definition);
         if (hq.factionFunds < airframeCost + cargoCost)
         {
-            SetStatus(cargoCost > 0f
+            // Loud: from the queue this drops the run, long after the click that asked for it.
+            FailLaunch(cargoCost > 0f
                 ? $"The faction cannot afford this supply aircraft and its {CommanderEconomyService.FundsLabel(cargoCost)} cargo."
                 : "The faction cannot afford this supply aircraft.");
             return;
@@ -1059,7 +1072,7 @@ internal sealed partial class CommanderSupplyHeliService
             purchased = true;
         }
 
-        pendingAircraftSpawn = new PendingAircraftSpawn(
+        PendingAircraftSpawn pendingSpawn = new(
             hq,
             aircraftOption.Definition,
             airbase,
@@ -1074,6 +1087,7 @@ internal sealed partial class CommanderSupplyHeliService
             request.Targets,
             Time.unscaledTime + PendingSpawnTimeoutSeconds,
             followRoads: request.FollowRoads);
+        pendingAircraftSpawns.Add(pendingSpawn);
 
         AircraftDefinition definition = aircraftOption.Definition;
         int liveryIndex = definition.aircraftParameters.GetRandomLiveryForFaction(hq.faction);
@@ -1089,7 +1103,7 @@ internal sealed partial class CommanderSupplyHeliService
         if (!result.Allowed)
         {
             NotifySamMissionFailed(request.SupportSummary);
-            pendingAircraftSpawn = null;
+            pendingAircraftSpawns.Remove(pendingSpawn);
             if (purchased)
             {
                 hq.ModifyUnitSupply(definition, -1);
@@ -1097,7 +1111,7 @@ internal sealed partial class CommanderSupplyHeliService
             }
 
             hq.AddFunds(cargoCost);
-            SetStatus("The airbase rejected the supply aircraft spawn.");
+            FailLaunch("The airbase rejected the supply aircraft spawn.");
             return;
         }
 
@@ -1110,14 +1124,44 @@ internal sealed partial class CommanderSupplyHeliService
         SetStatus($"Spawned {aircraftOption.Label} with {request.CargoLabel}.{purchaseLabel}");
     }
 
+    private void FailLaunch(string message)
+    {
+        SetStatus(message);
+        CommanderNotice.Fail(message);
+        CommanderPlugin.Log.LogInfo($"Cargo run refused: {message}");
+    }
+
     private void TryAssignPendingAircraft(FactionHQ hq, Unit unit)
     {
-        PendingAircraftSpawn? pending = pendingAircraftSpawn;
-        if (pending == null
-            || !ReferenceEquals(hq, pending.Hq)
-            || unit is not Aircraft aircraft
-            || aircraft.Player != null
-            || !ReferenceEquals(aircraft.definition, pending.Definition))
+        if (pendingAircraftSpawns.Count == 0 || unit is not Aircraft aircraft || aircraft.Player != null)
+        {
+            return;
+        }
+
+        // Several fields can be launching the same airframe at once, so the new aircraft is the
+        // one from the field it appeared at.
+        PendingAircraftSpawn? pending = null;
+        float nearest = float.MaxValue;
+        for (int i = 0; i < pendingAircraftSpawns.Count; i++)
+        {
+            PendingAircraftSpawn candidate = pendingAircraftSpawns[i];
+            if (!ReferenceEquals(hq, candidate.Hq)
+                || !ReferenceEquals(aircraft.definition, candidate.Definition)
+                || candidate.OriginAirbase == null)
+            {
+                continue;
+            }
+
+            Transform field = candidate.OriginAirbase.center != null ? candidate.OriginAirbase.center : candidate.OriginAirbase.transform;
+            float distance = (field.position - aircraft.transform.position).sqrMagnitude;
+            if (distance < nearest)
+            {
+                pending = candidate;
+                nearest = distance;
+            }
+        }
+
+        if (pending == null)
         {
             return;
         }
@@ -1200,7 +1244,7 @@ internal sealed partial class CommanderSupplyHeliService
                     ? $"Air Command {(CommanderAirCommandService.Instance?.IsCommandedAircraft(aircraft) == true ? "took it" : "REFUSED IT")}."
                     : "flown by the transport AI."));
 
-        pendingAircraftSpawn = null;
+        pendingAircraftSpawns.Remove(pending);
     }
 
     private bool OverrideTransportTarget(AIHeloTransportState state)

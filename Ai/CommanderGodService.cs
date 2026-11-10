@@ -229,9 +229,18 @@ internal sealed class CommanderGodService : ICommanderTickPersistent, ICommander
         Say(string.Format(CultureInfo.InvariantCulture, NuclearLaunch, baseName), CommanderGodUi.TagLaunching);
     }
 
+    /// <summary>This side is the god: GOD DIFFICULTY is on and it is the side players cannot join. Not
+    /// just any AI side, or an AI playing the player's team (a soak, or AI commanders on both sides)
+    /// got the god's economy too.</summary>
+    internal static bool IsGod(FactionHQ? hq)
+    {
+        return hq != null && hq.preventJoin && IsGodBudget();
+    }
+
     internal static bool IsGodBudget()
     {
-        if (CommanderSettings.ForceGodDifficulty)
+        if (CommanderSettings.ForceGodDifficulty
+            || CommanderFeatureGate.MissionName.IndexOf("Ground Control Champions GOD", System.StringComparison.OrdinalIgnoreCase) >= 0)
         {
             return true;
         }

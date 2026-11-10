@@ -49,12 +49,6 @@ internal sealed partial class CommanderSupplyHeliService
             return;
         }
 
-        if (pendingAircraftSpawn != null)
-        {
-            NavalSupplyFailed("Another supply aircraft is currently spawning. Try again shortly.");
-            return;
-        }
-
         CargoAircraftOption? aircraft = FindNavalSupplyAircraft();
         if (aircraft == null || !TryFindNavalCargo(aircraft, out CargoSlotOption? slot, out WeaponMount? mount))
         {
@@ -89,7 +83,7 @@ internal sealed partial class CommanderSupplyHeliService
 
         Loadout loadout = CreateEmptyLoadout(aircraft.HardpointSets.Length);
         PlaceCargoAndClearNonCargo(loadout, aircraft.HardpointSets, slot.HardpointIndex, mount!);
-        pendingAircraftSpawn = new PendingAircraftSpawn(
+        PendingAircraftSpawn pendingSpawn = new(
             hq,
             aircraft.Definition,
             airbase,
@@ -104,6 +98,7 @@ internal sealed partial class CommanderSupplyHeliService
             new[] { ship.GlobalPosition() },
             Time.unscaledTime + PendingSpawnTimeoutSeconds,
             ship);
+        pendingAircraftSpawns.Add(pendingSpawn);
 
         int liveryIndex = aircraft.Definition.aircraftParameters.GetRandomLiveryForFaction(hq.faction);
         Airbase.TrySpawnResult result = airbase.TrySpawnAircraft(
@@ -114,7 +109,7 @@ internal sealed partial class CommanderSupplyHeliService
             aircraft.Definition.aircraftParameters.DefaultFuelLevel);
         if (!result.Allowed)
         {
-            pendingAircraftSpawn = null;
+            pendingAircraftSpawns.Remove(pendingSpawn);
             if (purchased)
             {
                 hq.ModifyUnitSupply(aircraft.Definition, -1);
@@ -153,35 +148,6 @@ internal sealed partial class CommanderSupplyHeliService
         selectedSlot = null;
         selectedMount = null;
         return false;
-    }
-
-    private static Airbase? FindNearestNavalSupplyAirbase(
-        FactionHQ hq,
-        AircraftDefinition definition,
-        WeaponMount mount,
-        Vector3 targetPosition)
-    {
-        Airbase? nearest = null;
-        float nearestSqrDistance = float.MaxValue;
-        foreach (Airbase candidate in hq.GetAirbases())
-        {
-            if (!IsAvailableAirbase(candidate, hq, definition)
-                || !WeaponChecker.MountAllowedHQ(mount, hq)
-                || !WeaponChecker.MountAllowedAirbase(mount, candidate))
-            {
-                continue;
-            }
-
-            Transform position = candidate.center != null ? candidate.center : candidate.transform;
-            float sqrDistance = (position.position - targetPosition).sqrMagnitude;
-            if (sqrDistance < nearestSqrDistance)
-            {
-                nearestSqrDistance = sqrDistance;
-                nearest = candidate;
-            }
-        }
-
-        return nearest;
     }
 
     private static bool TrySelectNavalSupplyStation(Aircraft aircraft)
@@ -273,5 +239,34 @@ internal sealed partial class CommanderSupplyHeliService
         {
             SetStatus(text);
         }
+    }
+
+    private Airbase? FindNearestNavalSupplyAirbase(
+        FactionHQ hq,
+        AircraftDefinition definition,
+        WeaponMount mount,
+        Vector3 targetPosition)
+    {
+        Airbase? nearest = null;
+        float nearestSqrDistance = float.MaxValue;
+        foreach (Airbase candidate in hq.GetAirbases())
+        {
+            if (!IsFreeAirbase(candidate, hq, definition)
+                || !WeaponChecker.MountAllowedHQ(mount, hq)
+                || !WeaponChecker.MountAllowedAirbase(mount, candidate))
+            {
+                continue;
+            }
+
+            Transform position = candidate.center != null ? candidate.center : candidate.transform;
+            float sqrDistance = (position.position - targetPosition).sqrMagnitude;
+            if (sqrDistance < nearestSqrDistance)
+            {
+                nearestSqrDistance = sqrDistance;
+                nearest = candidate;
+            }
+        }
+
+        return nearest;
     }
 }

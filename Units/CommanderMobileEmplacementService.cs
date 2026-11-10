@@ -17,7 +17,11 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     private const float TractorRange = 300f;
     private const float ArrivalDistance = 12f;
     private const float StagingDistance = 18f;
-    private const float HitchSeconds = 10f;
+
+    /// <summary>The trailer glides onto the hitch at this pace, between the min and max hitch time.</summary>
+    private const float HitchGlideSpeed = 5f;
+    private const float MinHitchSeconds = 2f;
+    private const float MaxHitchSeconds = 10f;
 
     /// <summary>A stopped hauler this close hitches from where it stands; the trailer glides over.</summary>
     private const float GlideRange = 60f;
@@ -269,6 +273,8 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         job.TowOffset = container
             ? new Vector3(0f, BedHeight, -(tractorHalf - trailerHalf))
             : new Vector3(0f, GooseneckLift, -(tractorHalf + trailerHalf - GooseneckOverlap));
+        float glide = Vector3.Distance(trailer.transform.position, job.Tractor.transform.TransformPoint(job.TowOffset));
+        job.HitchSeconds = Mathf.Clamp(glide / HitchGlideSpeed, MinHitchSeconds, MaxHitchSeconds);
         job.TowColliders = Array.FindAll(trailer.GetComponentsInChildren<Collider>(), collider => collider.enabled);
         foreach (Collider collider in job.TowColliders)
         {
@@ -311,7 +317,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         while (job.Stage != TowStage.ApproachingPickup && job.Trailer != null && job.Tractor != null)
         {
             // Glides from where the trailer stood onto the hauler over the hitch, then rides there.
-            float t = Mathf.SmoothStep(0f, 1f, (Time.time - startedAt) / HitchSeconds);
+            float t = Mathf.SmoothStep(0f, 1f, (Time.time - startedAt) / job.HitchSeconds);
             Transform tractor = job.Tractor.transform;
             Vector3 position = Vector3.Lerp(from.ToLocalPosition(), tractor.TransformPoint(job.TowOffset), t);
             Quaternion rotation = Quaternion.Slerp(fromRotation, tractor.rotation, t);
@@ -583,10 +589,10 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
                 {
                     CommanderPlugin.Log.LogInfo($"Hitch: {CommanderGameAccess.GetUnitLabel(job.Tractor)} stopped {distance:0} m from the trailer; hitching.");
                     job.Stage = TowStage.Hitching;
-                    job.StageCompleteAt = Time.unscaledTime + HitchSeconds;
                     IssueHaulerDestination(job.Tractor, job.Tractor.GlobalPosition());
                     BeginTow(job);
-                    SetStatus("Hitching trailer (10 seconds).");
+                    job.StageCompleteAt = Time.unscaledTime + job.HitchSeconds;
+                    SetStatus($"Hitching trailer ({job.HitchSeconds:0} seconds).");
                 }
 
                 break;
@@ -734,6 +740,8 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         internal TowStage Stage { get; set; }
 
         internal float StageCompleteAt { get; set; }
+
+        internal float HitchSeconds { get; set; } = MaxHitchSeconds;
 
         internal float StoppedSince { get; set; } = float.MaxValue;
 

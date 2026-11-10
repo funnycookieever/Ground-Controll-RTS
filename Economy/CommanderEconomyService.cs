@@ -88,6 +88,12 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private const int DuelEnemyFactoryTarget = 3;
 
+    /// <summary>GOD DIFFICULTY's opening plants, all aircraft lines (see <c>TryPickEnemyFactory</c>).</summary>
+    private const int GodEnemyFactoryTarget = 6;
+
+    /// <summary>Longest GOD DIFFICULTY holds its convoys for the opening plants (see <c>IsGodOpening</c>).</summary>
+    private const float GodOpeningMaxSeconds = 600f;
+
     /// <summary>
     /// Reserve multiple a commander keeps clear of an economy purchase. Faction balances are
     /// mission-authored and scale-free, so this is a ratio rather than an absolute floor.
@@ -96,11 +102,23 @@ internal sealed partial class CommanderEconomyService
 
     /// <summary>How far a factory's price may fall below and rise above <see cref="FactoryBuildCost"/>
     /// for a cheap or a heavy product. Bounded so no roster price can make a plant free or absurd.</summary>
+    /// <summary>Factories priced above this get the wide <c>factory_large</c> hall, the rest the vertical one.</summary>
+    private const float LargeFactoryMinCost = 550f;
     private const float MinFactoryCostScale = 0.6f;
     private const float MaxFactoryCostScale = 2f;
 
     /// <summary>How many of its product a factory costs, at least: a dear line pays for itself in this many batches.</summary>
     private const float FactoryPaybackUnits = 3f;
+
+    /// <summary>
+    /// A ground plant costs this many of its product. At the 240 s cycle that is an 8 minute payback,
+    /// level with a Fuel Exchange and a little behind a Gold Mine (6), since what a plant makes is
+    /// units, not money it could spend elsewhere or put against upkeep.
+    /// </summary>
+    private const float GroundFactoryPaybackUnits = 2f;
+
+    /// <summary>Least a ground plant costs, so a near-worthless product does not make one free.</summary>
+    private const float MinGroundFactoryBuildCost = 20f;
 
     /// <summary>Buildings a built factory prefers to look like, best first.</summary>
     private static readonly string[] FactoryPrefabKeys =
@@ -620,6 +638,13 @@ internal sealed partial class CommanderEconomyService
             return FactoryBuildCost;
         }
 
+        // Ground plants are priced as the economy buildings they are: a set number of their product,
+        // no flat floor. The 250 x scale floor made a Type-12 plant pay back in over two hours.
+        if (production is not AircraftDefinition)
+        {
+            return Mathf.Max(MinGroundFactoryBuildCost, PriceOf(production) * GroundFactoryPaybackUnits);
+        }
+
         return production.unitName switch
         {
             "CI-22 Cricket" => 200f,
@@ -658,13 +683,15 @@ internal sealed partial class CommanderEconomyService
     }
 
     /// <summary>
-    /// Cost of taking a factory from <paramref name="level"/> to the next one: the plant's own price
-    /// times the level it starts from. Each level adds one unit a cycle, as much as a second plant
-    /// would.
+    /// Cost of taking a factory from <paramref name="level"/> to the next one. Each level adds one unit
+    /// a cycle, as much as a second plant would, so a ground plant's upgrade costs one plant and pays
+    /// back as fast as the plant did. Aircraft plants keep the rising ladder: their price times the
+    /// level they start from.
     /// </summary>
     internal static float GetFactoryUpgradeCost(Factory factory, int level)
     {
-        return GetFactoryUpgradeCost(GetFactoryBuildCost(factory.ProductionUnit), level);
+        float buildCost = GetFactoryBuildCost(factory.ProductionUnit);
+        return factory.ProductionUnit is AircraftDefinition ? GetFactoryUpgradeCost(buildCost, level) : buildCost;
     }
 
     internal static float GetFactoryUpgradeCost(float buildCost, int level)
@@ -1725,15 +1752,12 @@ internal sealed partial class CommanderEconomyService
     }
 
     /// <summary>
-    /// Which hall a factory wears. A **light** product gets the tall vertical plant and a heavy one -
-    /// the same rule that needs an upgraded depot - the wide shed, so both models in the game get
-    /// used and the building says something about what is inside it. The cheap line is the vertical
-    /// one because that is the model the request asked to reuse.
+    /// Which hall a factory wears, by its price: a plant costing more than
+    /// <see cref="LargeFactoryMinCost"/> gets the wide shed, every cheaper one the tall vertical plant.
     /// </summary>
     private BuildingDefinition? ResolveFactoryDefinition(UnitDefinition? production)
     {
-        // An airframe line always gets the wide shed: the tall hall is the light ground line's.
-        if (production is not VehicleDefinition vehicle || NeedsUpgradedDepot(vehicle))
+        if (production == null || GetFactoryBuildCost(production) > LargeFactoryMinCost)
         {
             return ResolveDefinition(CommanderBuildKind.Factory);
         }

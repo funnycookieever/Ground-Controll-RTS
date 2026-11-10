@@ -120,6 +120,16 @@ internal sealed partial class CommanderAirCommandService
             if (CommanderNetwork.TryPosition(args, 5, out GlobalPosition point))
             {
                 Unit? target = CommanderNetwork.TryUnit(args, 6, out Unit found) ? found : null;
+
+                // The guest's click asked its own cargo list, which is always empty (runs live here), so
+                // a travel point for a loaded transport arrives as a plain order. Read it the way the
+                // host's own click does: a leg on the way to the LZ, or the cargo run overrides it.
+                if (target == null
+                    && CommanderSupplyHeliService.Instance?.TryAddCargoRunWaypoint(aircraft, point, CommanderNetwork.Bool(args, 7)) == true)
+                {
+                    return;
+                }
+
                 SetAircraftOrder(aircraft, point, target, CommanderNetwork.Bool(args, 7), ReadMode(args, 8));
             }
         }));

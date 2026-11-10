@@ -355,7 +355,9 @@ internal sealed partial class CommanderOverlayUi
         GUI.Box(selectionBarRect, string.Empty, CommanderUiTheme.Panel);
         DrawSelectionPortrait(count);
         GUI.Label(new Rect(selectionBarRect.x + 12f, selectionBarRect.y + 3f, 150f, 24f), "SELECTION", CommanderUiTheme.Caption);
-        GUI.Label(
+
+        // One line only: a wrapped status is centred on the row and cut in half.
+        CommanderUiTheme.FitLineLabel(
             new Rect(selectionBarRect.x + 166f, selectionBarRect.y + 3f, selectionBarRect.width - 210f, 24f),
             GetSelectionCardText(),
             selectionCardWarning ? CommanderUiTheme.WarningLabel : CommanderUiTheme.MutedLabel);

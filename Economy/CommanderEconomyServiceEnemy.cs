@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace GroundControlRts;
@@ -168,6 +168,34 @@ internal sealed partial class CommanderEconomyService
         return Instance != null && Instance.CountHomeIncome(hq) >= GetUpgradeMines(hq);
     }
 
+    /// <summary>
+    /// GOD DIFFICULTY's opening: until its <see cref="GodEnemyFactoryTarget"/> aircraft plants are built, not
+    /// just placed (or
+    /// <see cref="GodOpeningMaxSeconds"/> pass, so a map with no room for them cannot stall it), the money
+    /// goes to plants, gold mines, the air push and air defence, and the attack convoys wait. Plants
+    /// out-earn bought airframes over a match; bought outright, the bank went on aircraft and convoys
+    /// and the first plant stood at minute seven.
+    /// </summary>
+    internal static bool IsGodOpening(FactionHQ hq)
+    {
+        // Built plants: the six blueprints go down in the first seconds, and counting those ended the
+        // opening before a single plant stood.
+        return IsGodEconomy(hq)
+            && Time.timeSinceLevelLoad < GodOpeningMaxSeconds
+            && CountBuiltFactories(hq) < GodEnemyFactoryTarget;
+    }
+
+    /// <summary>What the opening plants still to come cost, held back from the unit spender.</summary>
+    internal static float GetGodOpeningReserve(FactionHQ hq)
+    {
+        // Placed plants are paid for, so only the ones not yet placed are held.
+        // ponytail: priced as the next plant times the plants left; the next is the dearest new line,
+        // so this over-holds a little, never under.
+        return Instance != null && IsGodOpening(hq)
+            ? Mathf.Max(0, GodEnemyFactoryTarget - CountFactories(hq)) * Instance.GetEnemyFactoryReserve(hq)
+            : 0f;
+    }
+
     // goldMine: the reserve is a gold mine's price. The unit spender saves for that one out of a
     // share of the income instead of holding the whole price back.
     internal static float GetEnemyBuildReserve(FactionHQ hq, out bool goldMine)
@@ -246,7 +274,8 @@ internal sealed partial class CommanderEconomyService
         // Home economy before the frontier: the dock, the opening mines, then the dock's first upgrade,
         // ahead of per-base rungs (which grow with every base captured). GetUpgradeMines does not grow
         // with bases held. The dock goes first because its builder may need a long drive or a lift.
-        float dock = service.GetEnemyDockCost(hq, 1);
+        // GOD: the fleet waits for the opening plants.
+        float dock = IsGodOpening(hq) ? 0f : service.GetEnemyDockCost(hq, 1);
         if (dock > 0f)
         {
             return dock;
@@ -266,7 +295,7 @@ internal sealed partial class CommanderEconomyService
 
         // The opening plants straight after the home income, ahead of every per-base rung: the air
         // force comes out of them. A plant's price follows its product and the Unit Prices profile.
-        float factory = CountFactories(hq) < (duel ? DuelEnemyFactoryTarget : EnemyFactoryTarget)
+        float factory = CountFactories(hq) < GetEnemyFactoryTarget(hq, duel)
             ? service.GetEnemyFactoryReserve(hq)
             : 0f;
         if (factory > 0f)
@@ -480,6 +509,18 @@ internal sealed partial class CommanderEconomyService
         }
 
         return Mathf.Max(1, builders);
+    }
+
+    /// <summary>GOD DIFFICULTY: ten billion in the bank, so it skips the fuel and gas starters for
+    /// gold mines, builds them in parallel and opens on <see cref="GodEnemyFactoryTarget"/> aircraft plants.</summary>
+    private static bool IsGodEconomy(FactionHQ hq)
+    {
+        return CommanderEnemyCommanderService.IsChampionsMission && CommanderGodService.IsGod(hq);
+    }
+
+    private static int GetEnemyFactoryTarget(FactionHQ hq, bool duel)
+    {
+        return IsGodEconomy(hq) ? GodEnemyFactoryTarget : duel ? DuelEnemyFactoryTarget : EnemyFactoryTarget;
     }
 
     /// <summary>The free mines are for the side that was dealt the map, not one on a single base.</summary>
@@ -968,7 +1009,7 @@ internal sealed partial class CommanderEconomyService
         bool duel = CommanderEnemyCommanderService.IsDuelMission;
 
         // Home before the frontier, as in GetEnemyBuildReserve: the dock, the mines, its upgrade.
-        if (TryBuildEnemyDock(hq, 1))
+        if (!IsGodOpening(hq) && TryBuildEnemyDock(hq, 1))
         {
             return true;
         }
@@ -983,7 +1024,7 @@ internal sealed partial class CommanderEconomyService
             return TryBuildEnemyMine(hq);
         }
 
-        if (CountFactories(hq) < (duel ? DuelEnemyFactoryTarget : EnemyFactoryTarget) && GetEnemyFactoryReserve(hq) > 0f)
+        if (CountFactories(hq) < GetEnemyFactoryTarget(hq, duel) && GetEnemyFactoryReserve(hq) > 0f)
         {
             return TryBuildEnemyFactory(hq);
         }
@@ -1260,7 +1301,9 @@ internal sealed partial class CommanderEconomyService
     {
         // One at a time: an upgrade pays back in 4-5 minutes and a new building in over 6, so holding here
         // until the blueprint stands builds one, maxes it, then builds the next. A free mine is rushed.
+        // The god has the money for every builder to put one up at once.
         if (!HasFreeMine(hq)
+            && !IsGodEconomy(hq)
             && CountBlueprints(hq, CommanderBuildKind.FuelExchange)
                 + CountBlueprints(hq, CommanderBuildKind.GasTerminal)
                 + CountBlueprints(hq, CommanderBuildKind.Mine) > 0)

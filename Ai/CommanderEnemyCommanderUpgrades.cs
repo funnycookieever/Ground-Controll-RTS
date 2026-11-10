@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace GroundControlRts;
@@ -244,7 +244,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
         if (longestIdle == null
             || now - idleSince < IdleBuilderScrapSeconds
-            || builderScratch.Count <= MinEnemyBuilders
+            || builderScratch.Count <= GetBuilderBound(hq, min: true)
             || !CommanderUnitCap.IsGroundFull(hq)
             || CommanderEconomyService.Instance?.HasBlueprintWithoutBuilders(hq) != false)
         {
