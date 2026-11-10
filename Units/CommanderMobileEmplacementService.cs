@@ -275,7 +275,12 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             collider.enabled = false;
         }
 
-        CaptureLauncherElevation(job);
+        // Only the BDF StratoLance needs its launcher elevation preserved for now but can be expanded later if needed.
+        if (trailer.definition?.jsonKey is "SAMTrailer1")
+        {
+            CaptureLauncherElevation(job);
+        }
+
         trailer.StowTurrets(true);
 
         // Stabiliser legs are authored to stay down once deployed; let them fold for the tow.
@@ -345,20 +350,30 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         }
 
         trailer.enabled = true;
-        CommanderGameAccess.TeleportGroundVehicle(trailer, position);
-        SetPartsStayDeployed(trailer, job.StaysDeployed);
-        CommanderGameAccess.SetUnitHoldPosition(trailer, hold: true);
-        trailer.NetworknetworkStationary = true;
-        DeployPartsMethod?.Invoke(trailer, new object[] { true });
-
-        if (CommanderPlugin.Instance is { } plugin)
-        {
-            plugin.StartCoroutine(FinishUnstow(job));
-        }
-        else
+        bool restoreLauncher = job.LauncherElevations.Count != 0;
+        if (!restoreLauncher)
         {
             trailer.StowTurrets(false);
-            RestoreLauncherElevation(job);
+        }
+
+        CommanderGameAccess.TeleportGroundVehicle(trailer, position);
+        CommanderGameAccess.SetUnitHoldPosition(trailer, hold: true);
+
+        // Keep the existing deployment behavior for every trailer.
+        trailer.NetworknetworkStationary = true;
+        SetPartsStayDeployed(trailer, job.StaysDeployed);
+
+        if (restoreLauncher)
+        {
+            if (CommanderPlugin.Instance is { } plugin)
+            {
+                plugin.StartCoroutine(FinishUnstow(job));
+            }
+            else
+            {
+                trailer.StowTurrets(false);
+                RestoreLauncherElevation(job);
+            }
         }
     }
 
@@ -390,13 +405,10 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         return old;
     }
 
-    // Only the BDF StratoLance needs its launcher elevation preserved.
     private static void CaptureLauncherElevation(TowJob job)
     {
         GroundVehicle trailer = job.Trailer;
-        if (!string.Equals(trailer.definition?.unitName ?? trailer.unitName,
-                "StratoLance R9 Launcher", StringComparison.OrdinalIgnoreCase)
-            || ElevationField == null || ElevationPivotField == null || trailer.weaponStations == null)
+        if (ElevationField == null || ElevationPivotField == null || trailer.weaponStations == null)
             return;
 
         foreach (WeaponStation station in trailer.weaponStations)
@@ -426,24 +438,10 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     {
         GroundVehicle trailer = job.Trailer;
         yield return new WaitForFixedUpdate();
-        float deadline = Time.time + 20f;
-        while (trailer != null && !trailer.disabled && trailer.NetworknetworkStationary
-            && CommanderFireNow.ArePartsDeploying(trailer) && Time.time < deadline)
-        {
-            if (Instance?.FindJob(trailer) != null) yield break;
-            yield return new WaitForFixedUpdate();
-        }
 
         if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
             || Instance?.FindJob(trailer) != null)
             yield break;
-
-        // Other trailers need only their normal unstow behavior.
-        if (job.LauncherElevations.Count == 0)
-        {
-            trailer.StowTurrets(false);
-            yield break;
-        }
 
         // Retain the folded pose so unstowing does not visibly snap the launcher upright.
         var folded = new Dictionary<Turret, (float Angle, Quaternion Rotation)>();
