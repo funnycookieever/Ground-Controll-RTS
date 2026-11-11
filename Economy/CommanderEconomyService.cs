@@ -1275,37 +1275,43 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private static void PayChampionsStipend()
     {
+        FactionHQ? localHq = CommanderGameAccess.GetLocalHq();
+        foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
+        {
+            float perMinute = hq != null && hq.IsServer ? GetAiStipendPerMinute(hq, localHq) : 0f;
+            if (perMinute > 0f)
+            {
+                hq!.AddFunds(perMinute * IncomeIntervalSeconds / 60f);
+            }
+        }
+    }
+
+    /// <summary>What <see cref="PayChampionsStipend"/> pays this faction a minute, 0 for a human side.</summary>
+    private static float GetAiStipendPerMinute(FactionHQ hq, FactionHQ? localHq)
+    {
+        if (!CommanderEnemyCommanderService.IsAiFaction(hq, localHq))
+        {
+            return 0f;
+        }
+
         // A GC RTS map may set the AI's flat income in the editor, on a duel map as well; only
         // Champions and Team Duel PvE add the per-opponent share.
         bool champions = CommanderEnemyCommanderService.IsChampionsMission;
         bool teamPve = CommanderEnemyCommanderService.IsTeamDuelPveMission;
         float flat = CommanderMapSettings.AiIncomePerMinute ?? (champions ? ChampionsEnemyIncomePerMinute : 0f);
-        if (flat <= 0f && !teamPve)
-        {
-            return;
-        }
-
         float perOpponent = teamPve ? TeamPveEnemyIncomePerOpponentPerMinute : champions ? ChampionsEnemyIncomePerOpponentPerMinute : 0f;
 
-        FactionHQ? localHq = CommanderGameAccess.GetLocalHq();
-        foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
+        // Scales with the lobby: every human on another team adds to the AI's income.
+        int opponents = 0;
+        foreach (FactionHQ other in FactionRegistry.GetAllHQs())
         {
-            if (hq != null && hq.IsServer && CommanderEnemyCommanderService.IsAiFaction(hq, localHq))
+            if (perOpponent > 0f && other != null && other != hq)
             {
-                // Scales with the lobby: every human on another team adds to the AI's income.
-                int opponents = 0;
-                foreach (FactionHQ other in FactionRegistry.GetAllHQs())
-                {
-                    if (perOpponent > 0f && other != null && other != hq)
-                    {
-                        opponents += other.GetPlayers(sortByScore: false).Count;
-                    }
-                }
-
-                float perMinute = flat + (perOpponent * opponents);
-                hq.AddFunds(perMinute * IncomeIntervalSeconds / 60f);
+                opponents += other.GetPlayers(sortByScore: false).Count;
             }
         }
+
+        return Mathf.Max(0f, flat) + (perOpponent * opponents);
     }
 
     /// <summary>The map's base income: every side is paid it like an income building it does not have.</summary>

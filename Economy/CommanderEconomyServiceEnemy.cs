@@ -198,9 +198,12 @@ internal sealed partial class CommanderEconomyService
 
     // goldMine: the reserve is a gold mine's price. The unit spender saves for that one out of a
     // share of the income instead of holding the whole price back.
-    internal static float GetEnemyBuildReserve(FactionHQ hq, out bool goldMine)
+    // income: the rung pays money back (a mine, an income upgrade or a mine's AA guard), so the unit
+    // spender holds it even while its army is short.
+    internal static float GetEnemyBuildReserve(FactionHQ hq, out bool goldMine, out bool income)
     {
         goldMine = false;
+        income = false;
         CommanderEconomyService? service = Instance;
         if (service == null || hq == null || hq.faction == null)
         {
@@ -227,12 +230,14 @@ internal sealed partial class CommanderEconomyService
         {
             CommanderBuildKind rebuild = service.ChooseEnemyIncomeKind(hq);
             goldMine = rebuild == CommanderBuildKind.Mine;
+            income = true;
             return service.GetEnemyIncomeReserve(hq, rebuild);
         }
 
         // An income building comes before the radar and the dock: the Duel pays an AI nothing else.
         if (service.CountMines(hq) == 0)
         {
+            income = true;
             return GetEnemyMineReserve(service, hq, out goldMine);
         }
 
@@ -266,6 +271,7 @@ internal sealed partial class CommanderEconomyService
         // Then upgrade existing income, best payback first, ahead of the dock and any new building.
         if (service.FindEnemyIncomeUpgrade(hq, out float upgrade) != null)
         {
+            income = true;
             return upgrade;
         }
 
@@ -284,12 +290,14 @@ internal sealed partial class CommanderEconomyService
         // Any income building counts, not only gold mines, or a poor commander never reaches factories.
         if (service.CountHomeIncome(hq) < GetUpgradeMines(hq))
         {
+            income = true;
             return GetEnemyMineReserve(service, hq, out goldMine);
         }
 
         // The first gold mine goes ahead of the plants. It pays itself back in about 4 minutes.
         if (service.CountMines(hq, CommanderBuildKind.Mine) == 0 && service.IsEnemyMineOpen(hq))
         {
+            income = true;
             return GetEnemyMineReserve(service, hq, out goldMine);
         }
 
@@ -311,6 +319,14 @@ internal sealed partial class CommanderEconomyService
 
         // No per-base bunker rung: every base on the mod's maps comes with one.
 
+        // Uranium for the GPO-N, once the income is there. Behind the per-base rungs it was never
+        // reached: every base captured reopens a depot, a radar and two AA posts ahead of it.
+        float enrichment = service.GetEnemyEnrichmentCost(hq, out _, out _);
+        if (enrichment > 0f)
+        {
+            return enrichment;
+        }
+
         // Then a depot at every base. FactionHQ.DeployVehicles rolls the reserve out of the depots
         // the faction owns, nearest the front first, so a commander holding seven bases and one
         // depot started every convoy of the match from the same corner of the map and the player
@@ -327,6 +343,7 @@ internal sealed partial class CommanderEconomyService
         // six Champions bases with nothing and the whole army rolling out of the capital.
         if (service.IsBelowEnemyIncomeTarget(hq))
         {
+            income = true;
             return GetEnemyMineReserve(service, hq, out goldMine);
         }
 
@@ -354,24 +371,13 @@ internal sealed partial class CommanderEconomyService
             return GetStructureCost(defence);
         }
 
-        // Late game, on a big income only: uranium for the GPO-N.
-        float enrichment = service.GetEnemyEnrichmentCost(hq, out _, out _);
-        if (enrichment > 0f)
-        {
-            return enrichment;
-        }
-
-        if (service.IsBelowEnemyIncomeTarget(hq, EnemyLateIncomeMultiple))
-        {
-            return GetEnemyMineReserve(service, hq, out goldMine);
-        }
-
-        // No rung for filling every base with plants: the factory fund (GetEnemyFactoryFund) saves for
-        // them out of income and builds each out of turn. Held here too, the dearest plant's price would
-        // freeze the army.
-
-        // The capital ships last: the top dock level is the dearest thing on the ladder.
-        return service.GetEnemyDockCost(hq, MaxLevel);
+        // Then income for the rest of the match, with no ceiling: a player has none, and capping the AI
+        // at twice its mine target is what let the player out-earn it. The mine rung saves out of a
+        // share of income (MineFund), so the army keeps the rest. Factories and the top dock level are
+        // bought out of turn (GetEnemyFactoryFund, ReviewEnemy), so nothing is starved behind this.
+        // ponytail: a commander with no mine site left just parks a mine fund (at most one price).
+        income = true;
+        return GetEnemyMineReserve(service, hq, out goldMine);
     }
 
     /// <summary>
@@ -902,7 +908,7 @@ internal sealed partial class CommanderEconomyService
         bool built = TryBuildFundedFactory(hq);
         for (int i = GetEnemyBlueprintLimit(hq); i > 0; i--)
         {
-            float wanted = GetEnemyBuildReserve(hq, out _);
+            float wanted = GetEnemyBuildReserve(hq, out _, out _);
             if (wanted <= 0f || hq.factionFunds < wanted || !TryBuildEnemyEconomy(hq))
             {
                 break;
@@ -1034,6 +1040,11 @@ internal sealed partial class CommanderEconomyService
             return true;
         }
 
+        if (TryBuildEnemyEnrichment(hq))
+        {
+            return true;
+        }
+
         if (TryBuildEnemyDepot(hq))
         {
             return true;
@@ -1066,12 +1077,7 @@ internal sealed partial class CommanderEconomyService
             return true;
         }
 
-        if (TryBuildEnemyEnrichment(hq))
-        {
-            return true;
-        }
-
-        if (IsBelowEnemyIncomeTarget(hq, EnemyLateIncomeMultiple) && TryBuildEnemyMine(hq))
+        if (TryBuildEnemyMine(hq))
         {
             return true;
         }
@@ -1301,9 +1307,11 @@ internal sealed partial class CommanderEconomyService
     {
         // One at a time: an upgrade pays back in 4-5 minutes and a new building in over 6, so holding here
         // until the blueprint stands builds one, maxes it, then builds the next. A free mine is rushed.
-        // The god has the money for every builder to put one up at once.
+        // The god has the money for every builder to put one up at once, and so does a commander
+        // holding several gold mines' worth.
         if (!HasFreeMine(hq)
             && !IsGodEconomy(hq)
+            && hq.factionFunds < GetIncomeCost(CommanderBuildKind.Mine, 0) * EnemyReserveMultiple
             && CountBlueprints(hq, CommanderBuildKind.FuelExchange)
                 + CountBlueprints(hq, CommanderBuildKind.GasTerminal)
                 + CountBlueprints(hq, CommanderBuildKind.Mine) > 0)

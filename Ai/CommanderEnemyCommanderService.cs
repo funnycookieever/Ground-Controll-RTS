@@ -1098,15 +1098,15 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     /// balance, not money moved; it is clamped to the balance and cleared once the mine is no longer
     /// the next rung.
     /// </summary>
-    private static float GetSavedBuildReserve(FactionHQ hq, CommanderState state)
+    private static float GetSavedBuildReserve(FactionHQ hq, CommanderState state, bool incomeOnly)
     {
-        float reserve = CommanderEconomyService.GetEnemyBuildReserve(hq, out bool goldMine);
+        float reserve = CommanderEconomyService.GetEnemyBuildReserve(hq, out bool goldMine, out bool income);
         float now = Time.time;
         if (!goldMine)
         {
             state.MineFund = 0f;
             state.MineFundAt = -1f;
-            return reserve;
+            return incomeOnly && !income ? 0f : reserve;
         }
 
         if (state.MineFundAt >= 0f)
@@ -1198,9 +1198,12 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
         // and air defence fly meanwhile, the attack column comes once the plants stand.
         bool godOpening = CommanderEconomyService.IsGodOpening(hq);
         bool holdArmy = (duel && !CommanderCaptureService.HasForwardBase(hq)) || godOpening;
-        float reserve = !holdArmy && CountArmy(hq) < ArmyBeforeSaving && CommanderEconomyService.HasEnemyHomeIncome(hq)
-            ? 0f
-            : GetSavedBuildReserve(hq, state);
+
+        // A short army still saves for income (a mine out of its fund, an upgrade at its price): with
+        // nothing held, 45% of the balance went every review, the balance sat near one minute's
+        // income, and a 400-600 upgrade or mine was out of reach for most of the match.
+        bool armyShort = !holdArmy && CountArmy(hq) < ArmyBeforeSaving && CommanderEconomyService.HasEnemyHomeIncome(hq);
+        float reserve = GetSavedBuildReserve(hq, state, incomeOnly: armyShort);
 
         // The factory savings are held back whatever the army needs: they are a share of income,
         // not the whole price, so the convoys still get the rest.

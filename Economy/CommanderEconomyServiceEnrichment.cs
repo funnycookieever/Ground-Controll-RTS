@@ -94,8 +94,12 @@ internal sealed partial class CommanderEconomyService
     {
         plant = null;
         anchor = default;
+
+        // Or a balance that covers the plant several times over: a rich start need not wait for income.
         float income = GetIncomePerMinute(hq);
-        if (income < EnemyEnrichmentIncomePerMinute)
+        BuildingDefinition? mission = GetMissionEnrichmentDefinition();
+        bool rich = mission != null && hq.factionFunds >= GetStructureCost(mission) * EnemyReserveMultiple;
+        if (income < EnemyEnrichmentIncomePerMinute && !rich)
         {
             return NoteEnrichmentGate(hq, $"income {income:0}/min, needs {EnemyEnrichmentIncomePerMinute:0}");
         }
