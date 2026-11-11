@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Faction limited depot setting now includes only faction specific and shared vehicles (M12 Jackknife and vehicles deployable using trasnport).
 - Fixed BDF StratoLance launcher elevation on deploy.
 
 ## 1.0.0.2

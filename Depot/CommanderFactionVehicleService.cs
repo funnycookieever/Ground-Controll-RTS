@@ -5,6 +5,57 @@ namespace GroundControlRts;
 
 internal sealed class CommanderFactionVehicleService : ICommanderResetSession
 {
+    /// <summary>VehicleDefinition.jsonKey to factionTag, or SHARED. Add new vehicles here.</summary>
+    private static readonly Dictionary<string, string> VehicleFactions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["AFV8_APC"] = "BDF",
+        ["AFV8_IFV"] = "BDF",
+        ["AFV8_SAM"] = "BDF",
+        ["CRAMTrailer1"] = "BDF",
+        ["HLT-FC"] = "BDF",
+        ["HLT-FT"] = "BDF",
+        ["HLT-L"] = "BDF",
+        ["HLT-M"] = "BDF",
+        ["HLT-MART"] = "BDF",
+        ["HLT-R"] = "BDF",
+        ["HLT-T"] = "BDF",
+        ["LCV45"] = "BDF",
+        ["LaserTrailer1"] = "BDF",
+        ["Linebreaker_APC"] = "PALA",
+        ["Linebreaker_IFV"] = "PALA",
+        ["Linebreaker_SAM"] = "PALA",
+        ["MBT"] = "BDF",
+        ["MBT1"] = "PALA",
+        ["RadarSAM1"] = "PALA",
+        ["SAMTrailer1"] = "BDF",
+        ["SPAAG1"] = "BDF",
+        ["SPAAG2"] = "PALA",
+        ["Truck2-CRAM"] = "PALA",
+        ["Truck2-FC"] = "PALA",
+        ["Truck2-FT"] = "PALA",
+        ["Truck2-L"] = "PALA",
+        ["Truck2-LADS"] = "PALA",
+        ["Truck2-M"] = "PALA",
+        ["Truck2-MLRS"] = "PALA",
+        ["Truck2-MRAP"] = "PALA",
+        ["Truck2-R"] = "PALA",
+        ["Truck2-RSAM"] = "PALA",
+        ["Truck2-T"] = "PALA",
+        ["Truck2-TBM-N"] = "PALA",
+        ["Truck2-TBM"] = "PALA",
+        ["LightTruck1_AA"] = "SHARED",
+        ["LightTruck1_AT"] = "SHARED",
+        ["6x6_1_AA"] = "SHARED",
+        ["6x6_1_APC"] = "SHARED",
+        ["6x6_1_AT"] = "SHARED",
+        ["6x6_1_IFV"] = "SHARED",
+        ["SAMTurret1"] = "SHARED",
+        ["RadarContainer1"] = "SHARED",
+        ["UGV1_grenade"] = "SHARED",
+        ["UGV1_SAM"] = "SHARED",
+        ["UGVDozer1"] = "SHARED",
+    };
+
     /// <summary>
     /// How many enriched warheads a definition's prefab needs to roll out, 0 for everything that
     /// is not nuclear. Prefab data, so it never changes inside a session and is read once per
@@ -63,6 +114,24 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
         return Math.Max(0f, definition.value);
     }
 
+    /// <summary>Purchase eligibility only. Existing reserves may deploy regardless of allocation.</summary>
+    internal static bool CanPurchase(VehicleDefinition definition, FactionHQ? hq)
+    {
+        if (!CommanderSettings.LimitToFactoryVehicles)
+        {
+            return true;
+        }
+
+        if (hq?.faction == null)
+        {
+            return false;
+        }
+
+        return VehicleFactions.TryGetValue(definition.jsonKey, out string allocation)
+            && (allocation == "SHARED"
+                || string.Equals(allocation, hq.faction.factionTag, StringComparison.OrdinalIgnoreCase));
+    }
+
     internal static bool CanAcquire(VehicleDefinition definition, out string reason)
     {
         if (GetReserveCount(definition) > 0)
@@ -75,6 +144,12 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
         if (CommanderDraftService.IsDraftMission)
         {
             reason = $"No {CommanderGameAccess.GetVehicleLabel(definition)} left in your drafted reserve.";
+            return false;
+        }
+
+        if (!CanPurchase(definition, CommanderGameAccess.GetLocalHq()))
+        {
+            reason = $"{CommanderGameAccess.GetVehicleLabel(definition)} is not available to this faction.";
             return false;
         }
 
