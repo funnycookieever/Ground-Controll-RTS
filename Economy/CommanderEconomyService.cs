@@ -243,8 +243,8 @@ internal sealed partial class CommanderEconomyService
     /// <summary>What a new factory may be told to build: the faction's ground vehicles, then every aircraft.</summary>
     internal IReadOnlyList<UnitDefinition> ProductionOptions => productionOptions;
 
-    /// <summary>0..1 toward the next income payout, or -1 when the clock is not running here
-    /// (a guest, whose host pays the income).</summary>
+    /// <summary>0..1 toward the next income payout, or -1 when the clock is stale. A guest's clock
+    /// is set from the host's, which is the one that pays.</summary>
     internal float IncomeTickProgress
     {
         get

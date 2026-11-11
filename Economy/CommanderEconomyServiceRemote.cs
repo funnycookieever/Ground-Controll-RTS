@@ -29,6 +29,11 @@ internal sealed partial class CommanderEconomyService
         CommanderNetwork.OnSync(SyncBlueprints);
         CommanderNetwork.OnGuest("blueprints", ApplyBlueprints);
         CommanderNetwork.OnGuest("st.eco", args => StatusText = CommanderNetwork.Arg(args, 1));
+
+        // The host pays the income, so a guest's tick bar runs on the host's clock, not its own
+        // load-time phase: otherwise the money lands while the guest's bar is still filling.
+        CommanderNetwork.OnSync((_, messages) => messages.Add(new[] { "eco.tick", CommanderNetwork.Num(nextIncomeAt - Time.time) }));
+        CommanderNetwork.OnGuest("eco.tick", args => nextIncomeAt = Time.time + CommanderNetwork.Float(args, 1));
     }
 
     private void HostBuild(FactionHQ hq, string[] args)
