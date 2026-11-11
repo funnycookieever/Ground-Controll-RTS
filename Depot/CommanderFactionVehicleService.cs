@@ -43,16 +43,16 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
         ["Truck2-T"] = "PALA",
         ["Truck2-TBM-N"] = "PALA",
         ["Truck2-TBM"] = "PALA",
-        ["LightTruck1_AA"] = "SHARED",
-        ["LightTruck1_AT"] = "SHARED",
-        ["6x6_1_AA"] = "SHARED",
-        ["6x6_1_APC"] = "SHARED",
-        ["6x6_1_AT"] = "SHARED",
-        ["6x6_1_IFV"] = "SHARED",
-        ["SAMTurret1"] = "SHARED",
-        ["RadarContainer1"] = "SHARED",
-        ["UGV1_grenade"] = "SHARED",
-        ["UGV1_SAM"] = "SHARED",
+        ["LightTruck1_AA"] = "BDF",
+        ["LightTruck1_AT"] = "BDF",
+        ["6x6_1_AA"] = "BDF",
+        ["6x6_1_APC"] = "BDF",
+        ["6x6_1_AT"] = "BDF",
+        ["6x6_1_IFV"] = "BDF",
+        ["SAMTurret1"] = "BDF",
+        ["RadarContainer1"] = "BDF",
+        ["UGV1_grenade"] = "PALA",
+        ["UGV1_SAM"] = "PALA",
         ["UGVDozer1"] = "SHARED",
     };
 
@@ -132,9 +132,9 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
                 || string.Equals(allocation, hq.faction.factionTag, StringComparison.OrdinalIgnoreCase));
     }
 
-    internal static bool CanAcquire(VehicleDefinition definition, out string reason)
+    internal static bool CanAcquire(VehicleDefinition definition, FactionHQ? hq, out string reason)
     {
-        if (GetReserveCount(definition) > 0)
+        if (hq != null && hq.GetUnitSupply(definition) > 0)
         {
             reason = string.Empty;
             return true;
@@ -147,14 +147,14 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
             return false;
         }
 
-        if (!CanPurchase(definition, CommanderGameAccess.GetLocalHq()))
+        if (!CanPurchase(definition, hq))
         {
             reason = $"{CommanderGameAccess.GetVehicleLabel(definition)} is not available to this faction.";
             return false;
         }
 
         float cost = GetPurchaseCost(definition);
-        if (FactionFunds >= cost)
+        if ((hq?.factionFunds ?? 0f) >= cost)
         {
             reason = string.Empty;
             return true;
@@ -164,9 +164,8 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
         return false;
     }
 
-    internal static void CommitAcquisition(VehicleDefinition definition)
+    internal static void CommitAcquisition(VehicleDefinition definition, FactionHQ? hq)
     {
-        FactionHQ? hq = CommanderGameAccess.GetLocalHq();
         if (hq == null)
         {
             return;

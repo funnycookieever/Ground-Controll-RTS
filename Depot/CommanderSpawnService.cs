@@ -1735,7 +1735,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
 
             VehicleDefinition definition = queue.PendingDefinitions[0];
             bool prepaid = queue.PendingPaid[0] > 0f;
-            if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, out string reason))
+            if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, queue.Depot.NetworkHQ, out string reason))
             {
                 SetStatus(reason);
                 CommanderNotice.Fail($"{CommanderGameAccess.GetVehicleLabel(definition)} CANNOT SPAWN: {reason}");
@@ -1794,7 +1794,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
 
             if (!prepaid)
             {
-                CommanderFactionVehicleService.CommitAcquisition(definition);
+                CommanderFactionVehicleService.CommitAcquisition(definition, queue.Depot.NetworkHQ);
             }
 
             MarkSpawned(queue);
@@ -1995,7 +1995,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
             {
                 CommanderNotice.Fail($"{CommanderGameAccess.GetVehicleLabel(definition)} is not available to this faction.");
             }
-            else if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, out string reason))
+            else if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, depot.NetworkHQ, out string reason))
             {
                 CommanderNotice.Fail($"{CommanderGameAccess.GetVehicleLabel(definition)} CANNOT SPAWN: {reason}");
             }
@@ -2007,7 +2007,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
                 }
                 else
                 {
-                    CommanderFactionVehicleService.CommitAcquisition(definition);
+                    CommanderFactionVehicleService.CommitAcquisition(definition, depot.NetworkHQ);
                 }
 
                 spawned = true;
