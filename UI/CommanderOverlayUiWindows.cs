@@ -228,8 +228,6 @@ internal sealed partial class CommanderOverlayUi
                     ? "Basegame repair targeting weighs damage, structure value and distance. NEAREST REPAIR instead targets the closest damaged friendly repairable structure on each Basegame repair scan. AFTER BUILD: STAY keeps a builder where its build finished instead of driving back to its post."
                 : focusedUnit is Ship
                     ? "Request a paid Basegame UH-90K naval-supply run for this ship. Purchased airframes are refunded after a successful return. Enemy ships cannot request supply."
-                : CommanderMoveService.IsIrSam(focusedUnit)
-                    ? "TARGETS: MISSILES ONLY keeps this IR SAM's launchers and guns for incoming missiles. Aircraft and ground units are ignored, so its ammunition is saved for defending the base."
                 : string.Empty;
             y = 32f + 6f + CommanderUiTheme.DrawHelpOverlay(
                 new Rect(10f, 32f, radarWindowRect.width - 20f, 108f),
@@ -286,24 +284,6 @@ internal sealed partial class CommanderOverlayUi
             y += 40f;
             GUI.Label(new Rect(12f, y, radarWindowRect.width - 24f, 38f), repairService.StatusText, CommanderUiTheme.MutedLabel);
             y += 42f;
-        }
-
-        if (CommanderMoveService.IsIrSam(focusedUnit) && CommanderMoveService.Instance is { } moves)
-        {
-            GUI.enabled = oldEnabled && friendly;
-            bool missileOnly = CommanderMoveService.IsMissileOnly(focusedUnit);
-            if (GUI.Button(
-                new Rect(12f, y, radarWindowRect.width - 24f, 36f),
-                new GUIContent(
-                    missileOnly ? "TARGETS: MISSILES ONLY" : "TARGETS: ALL",
-                    "MISSILES ONLY ignores aircraft and ground units and shoots only at incoming missiles."),
-                missileOnly ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
-            {
-                moves.ToggleMissileOnly(focusedUnit);
-            }
-
-            GUI.enabled = oldEnabled;
-            y += 40f;
         }
 
         if (focusedUnit is Ship ship)
@@ -610,7 +590,6 @@ internal sealed partial class CommanderOverlayUi
             || CommanderRepairService.IsRepairUnit(unit)
             || CommanderMobileEmplacementService.IsMoveableTrailer(unit)
             || CommanderMobileEmplacementService.IsTowingHauler(unit)
-            || CommanderMoveService.IsIrSam(unit)
             || samSiteService.IsConstructionCore(unit);
     }
 

@@ -741,10 +741,71 @@ internal sealed partial class CommanderAirCommandService
 
     internal static void ConstrainMissionDestination(AIPilotCombatModes state, FieldInfo? destinationField)
     {
+        AimMissileIntercept(state);
         HoldMissileStandoff(state, destinationField);
         HoldBomberClimb(state);
         ConstrainMissionDestination((PilotBaseState)state, destinationField);
         HoldCruiseHeight(state);
+    }
+
+    /// <summary>
+    /// The way in to a missile. <c>FlyToTarget</c> leads every target by its velocity times
+    /// <c>min(distance / own speed, 20 s)</c>, which assumes the target is slower than the chaser: a
+    /// Cricket at 80 m/s 5 km from a 600 m/s missile aimed 12 km down the missile's track, which for a
+    /// missile coming its way is behind the Cricket, so it turned its back on it. Aims at the real
+    /// intercept point instead, or straight at the missile when it cannot be caught.
+    /// </summary>
+    internal static void AimMissileIntercept(AIPilotCombatModes state)
+    {
+        Aircraft? aircraft = CommanderAirCommandPatches.GetStateAircraft(state);
+        if (aircraft == null
+            || CurrentTargetRef(state) is not Missile missile
+            || missile == null
+            || missile.disabled
+            || missile.rb == null
+            || AttackModeField == null
+            || Convert.ToInt32(AttackModeField.GetValue(state), CultureInfo.InvariantCulture) != FlyingToTargetMode
+            || !aircraft.NetworkHQ.TryGetKnownPosition(missile, out GlobalPosition known))
+        {
+            return;
+        }
+
+        Vector3 velocity = missile.rb.velocity;
+        float time = InterceptTime(known - aircraft.GlobalPosition(), velocity, aircraft.speed);
+        CommanderAirCommandPatches.DestinationRef(state) = known + (velocity * time);
+    }
+
+    /// <summary>
+    /// Seconds until a chaser at <paramref name="speed"/> can meet a target at offset
+    /// <paramref name="offset"/> moving at <paramref name="velocity"/>; 0 (fly at it) when it never can.
+    /// </summary>
+    internal static float InterceptTime(Vector3 offset, Vector3 velocity, float speed)
+    {
+        // |offset + velocity t| = speed t
+        float a = velocity.sqrMagnitude - (speed * speed);
+        float b = 2f * Vector3.Dot(offset, velocity);
+        float c = offset.sqrMagnitude;
+        float time;
+        if (Mathf.Abs(a) < 0.001f)
+        {
+            time = b < 0f ? -c / b : 0f;
+        }
+        else
+        {
+            float discriminant = (b * b) - (4f * a * c);
+            if (discriminant < 0f)
+            {
+                return 0f;
+            }
+
+            float root = Mathf.Sqrt(discriminant);
+            float t1 = (-b - root) / (2f * a);
+            float t2 = (-b + root) / (2f * a);
+            float low = Mathf.Min(t1, t2);
+            time = low > 0f ? low : Mathf.Max(t1, t2);
+        }
+
+        return time > 0f ? Mathf.Min(time, 20f) : 0f;
     }
 
     /// <summary>
@@ -881,6 +942,15 @@ internal sealed partial class CommanderAirCommandService
         // A station is held tighter than a strike package, not looser.
         if (!ClampToMissionArea(Vector3.zero, new Vector3(radius * 0.9f, 0f, 0f), radius, station: true, out Vector3 held)
             || held.magnitude >= radius)
+        {
+            failed = true;
+        }
+
+        // A Cricket meets an oncoming missile in front of itself, and flies straight at one it cannot catch.
+        Vector3 ahead = new(5000f, 0f, 0f);
+        float headOn = InterceptTime(ahead, new Vector3(-600f, 0f, 0f), 80f);
+        if (headOn <= 0f || (ahead + (new Vector3(-600f, 0f, 0f) * headOn)).x <= 0f
+            || InterceptTime(ahead, new Vector3(600f, 0f, 0f), 80f) != 0f)
         {
             failed = true;
         }

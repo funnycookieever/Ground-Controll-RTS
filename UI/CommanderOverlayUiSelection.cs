@@ -747,7 +747,16 @@ internal sealed partial class CommanderOverlayUi
         // "PATROL ON" and "CLICK AREA" wrapped onto a second line and were cut in half.
         bool hasAircraft = moveService.HasSelectedAircraft;
         bool hasArtillery = CommanderAreaFire.SelectionCanAreaFire(selectionService.SelectedUnits);
-        float columns = 5f + (hasAircraft ? 2f : 0f) + (hasArtillery ? 1f : 0f);
+        Unit? irSam = null;
+        for (int i = 0; i < selected.Count && irSam == null; i++)
+        {
+            if (CommanderMoveService.IsIrSam(selected[i]))
+            {
+                irSam = selected[i];
+            }
+        }
+
+        float columns = 5f + (hasAircraft ? 2f : 0f) + (hasArtillery ? 1f : 0f) + (irSam != null ? 1f : 0f);
         float buttonWidth = Mathf.Min(120f, (selectionBarRect.width - 28f - ((columns - 1f) * 6f)) / columns);
         float step = buttonWidth + 6f;
         float x = selectionBarRect.xMax - ((buttonWidth * columns) + ((columns - 1f) * 6f)) - 14f;
@@ -838,6 +847,31 @@ internal sealed partial class CommanderOverlayUi
                 }
             }
 
+            next++;
+        }
+
+        if (irSam != null)
+        {
+            // Every selected IR SAM follows the first one's new state, so a mixed selection ends up in step.
+            bool missileOnly = CommanderMoveService.IsMissileOnly(irSam);
+            GUI.enabled = oldEnabled && commandable;
+            if (GUI.Button(
+                new Rect(x + (step * next), rowY, buttonWidth, 34f),
+                new GUIContent(
+                    missileOnly ? "MISSILES ONLY" : "TARGETS: ALL",
+                    "IR SAM targets, click to toggle. MISSILES ONLY ignores aircraft and ground units and shoots only at incoming missiles, saving ammunition for defending the base."),
+                missileOnly ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+            {
+                for (int i = 0; i < selected.Count; i++)
+                {
+                    if (CommanderMoveService.IsIrSam(selected[i]) && CommanderMoveService.IsMissileOnly(selected[i]) == missileOnly)
+                    {
+                        moveService.ToggleMissileOnly(selected[i]);
+                    }
+                }
+            }
+
+            GUI.enabled = oldEnabled;
             next++;
         }
 
