@@ -31,7 +31,7 @@
 - AI pilots on the bundled maps fly with twice the skill. Champions GOD starts with 15000, lighter weather and higher clouds.
 
 ### Fixed
-
+- Faction limited depot setting now includes only faction specific and shared vehicles (M12 Jackknife and vehicles deployable using trasnport).
 - Fixed BDF StratoLance launcher elevation on deploy.
 - Helicopter and VTOL pads count as taken when a unit is standing on them.
 - Destroyed supply stores no longer break warhead stockpiles.

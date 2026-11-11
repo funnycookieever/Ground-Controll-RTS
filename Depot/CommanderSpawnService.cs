@@ -613,6 +613,12 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
             && !CommanderDraftService.IsDraftMission
             && CommanderFactionVehicleService.GetReserveCount(definition) <= CountQueued(definition, unpaidOnly: true))
         {
+            if (!CommanderFactionVehicleService.CanPurchase(definition, queue.Depot.NetworkHQ))
+            {
+                SetStatus($"{CommanderGameAccess.GetVehicleLabel(definition)} is not available to this faction.");
+                return;
+            }
+
             if (CommanderNetwork.IsGuest)
             {
                 BuyThroughHost(queue.Depot, definition);
@@ -1633,7 +1639,17 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
 
     private void RefreshFactionVehicleDefinitions()
     {
-        CommanderGameAccess.CollectFactionVehicleDefinitions(factionVehicleDefinitions);
+        factionVehicleDefinitions.Clear();
+        FactionHQ? hq = SelectedDepot == null ? CommanderGameAccess.GetLocalHq() : SelectedDepot.NetworkHQ;
+        for (int i = 0; i < vehicleDefinitions.Count; i++)
+        {
+            VehicleDefinition definition = vehicleDefinitions[i];
+            if (CommanderFactionVehicleService.CanPurchase(definition, hq)
+                || (hq != null && hq.GetUnitSupply(definition) > 0))
+            {
+                factionVehicleDefinitions.Add(definition);
+            }
+        }
     }
 
     private void SyncSelectedDepotFromSelection()
@@ -1719,7 +1735,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
 
             VehicleDefinition definition = queue.PendingDefinitions[0];
             bool prepaid = queue.PendingPaid[0] > 0f;
-            if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, out string reason))
+            if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, queue.Depot.NetworkHQ, out string reason))
             {
                 SetStatus(reason);
                 CommanderNotice.Fail($"{CommanderGameAccess.GetVehicleLabel(definition)} CANNOT SPAWN: {reason}");
@@ -1778,7 +1794,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
 
             if (!prepaid)
             {
-                CommanderFactionVehicleService.CommitAcquisition(definition);
+                CommanderFactionVehicleService.CommitAcquisition(definition, queue.Depot.NetworkHQ);
             }
 
             MarkSpawned(queue);
@@ -1975,7 +1991,11 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
             // Bought when it was queued: the deposit pays, and the balance has no say in it now.
             float paid = CommanderNetwork.Float(args, 3);
             bool prepaid = CommanderQueuePayment.Holds(paid);
-            if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, out string reason))
+            if (prepaid && !CommanderFactionVehicleService.CanPurchase(definition, hq))
+            {
+                CommanderNotice.Fail($"{CommanderGameAccess.GetVehicleLabel(definition)} is not available to this faction.");
+            }
+            else if (!prepaid && !CommanderFactionVehicleService.CanAcquire(definition, depot.NetworkHQ, out string reason))
             {
                 CommanderNotice.Fail($"{CommanderGameAccess.GetVehicleLabel(definition)} CANNOT SPAWN: {reason}");
             }
@@ -1987,7 +2007,7 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
                 }
                 else
                 {
-                    CommanderFactionVehicleService.CommitAcquisition(definition);
+                    CommanderFactionVehicleService.CommitAcquisition(definition, depot.NetworkHQ);
                 }
 
                 spawned = true;

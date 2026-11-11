@@ -5,6 +5,57 @@ namespace GroundControlRts;
 
 internal sealed class CommanderFactionVehicleService : ICommanderResetSession
 {
+    /// <summary>VehicleDefinition.jsonKey to factionTag, or SHARED. Add new vehicles here.</summary>
+    private static readonly Dictionary<string, string> VehicleFactions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["AFV8_APC"] = "BDF",
+        ["AFV8_IFV"] = "BDF",
+        ["AFV8_SAM"] = "BDF",
+        ["CRAMTrailer1"] = "BDF",
+        ["HLT-FC"] = "BDF",
+        ["HLT-FT"] = "BDF",
+        ["HLT-L"] = "BDF",
+        ["HLT-M"] = "BDF",
+        ["HLT-MART"] = "BDF",
+        ["HLT-R"] = "BDF",
+        ["HLT-T"] = "BDF",
+        ["LCV45"] = "BDF",
+        ["LaserTrailer1"] = "BDF",
+        ["Linebreaker_APC"] = "PALA",
+        ["Linebreaker_IFV"] = "PALA",
+        ["Linebreaker_SAM"] = "PALA",
+        ["MBT"] = "BDF",
+        ["MBT1"] = "PALA",
+        ["RadarSAM1"] = "PALA",
+        ["SAMTrailer1"] = "BDF",
+        ["SPAAG1"] = "BDF",
+        ["SPAAG2"] = "PALA",
+        ["Truck2-CRAM"] = "PALA",
+        ["Truck2-FC"] = "PALA",
+        ["Truck2-FT"] = "PALA",
+        ["Truck2-L"] = "PALA",
+        ["Truck2-LADS"] = "PALA",
+        ["Truck2-M"] = "PALA",
+        ["Truck2-MLRS"] = "PALA",
+        ["Truck2-MRAP"] = "PALA",
+        ["Truck2-R"] = "PALA",
+        ["Truck2-RSAM"] = "PALA",
+        ["Truck2-T"] = "PALA",
+        ["Truck2-TBM-N"] = "PALA",
+        ["Truck2-TBM"] = "PALA",
+        ["LightTruck1_AA"] = "BDF",
+        ["LightTruck1_AT"] = "BDF",
+        ["6x6_1_AA"] = "BDF",
+        ["6x6_1_APC"] = "BDF",
+        ["6x6_1_AT"] = "BDF",
+        ["6x6_1_IFV"] = "BDF",
+        ["SAMTurret1"] = "BDF",
+        ["RadarContainer1"] = "BDF",
+        ["UGV1_grenade"] = "PALA",
+        ["UGV1_SAM"] = "PALA",
+        ["UGVDozer1"] = "SHARED",
+    };
+
     /// <summary>
     /// How many enriched warheads a definition's prefab needs to roll out, 0 for everything that
     /// is not nuclear. Prefab data, so it never changes inside a session and is read once per
@@ -63,9 +114,27 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
         return Math.Max(0f, definition.value);
     }
 
-    internal static bool CanAcquire(VehicleDefinition definition, out string reason)
+    /// <summary>Purchase eligibility only. Existing reserves may deploy regardless of allocation.</summary>
+    internal static bool CanPurchase(VehicleDefinition definition, FactionHQ? hq)
     {
-        if (GetReserveCount(definition) > 0)
+        if (!CommanderSettings.LimitToFactoryVehicles)
+        {
+            return true;
+        }
+
+        if (hq?.faction == null)
+        {
+            return false;
+        }
+
+        return VehicleFactions.TryGetValue(definition.jsonKey, out string allocation)
+            && (allocation == "SHARED"
+                || string.Equals(allocation, hq.faction.factionTag, StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static bool CanAcquire(VehicleDefinition definition, FactionHQ? hq, out string reason)
+    {
+        if (hq != null && hq.GetUnitSupply(definition) > 0)
         {
             reason = string.Empty;
             return true;
@@ -78,8 +147,14 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
             return false;
         }
 
+        if (!CanPurchase(definition, hq))
+        {
+            reason = $"{CommanderGameAccess.GetVehicleLabel(definition)} is not available to this faction.";
+            return false;
+        }
+
         float cost = GetPurchaseCost(definition);
-        if (FactionFunds >= cost)
+        if ((hq?.factionFunds ?? 0f) >= cost)
         {
             reason = string.Empty;
             return true;
@@ -89,9 +164,8 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
         return false;
     }
 
-    internal static void CommitAcquisition(VehicleDefinition definition)
+    internal static void CommitAcquisition(VehicleDefinition definition, FactionHQ? hq)
     {
-        FactionHQ? hq = CommanderGameAccess.GetLocalHq();
         if (hq == null)
         {
             return;

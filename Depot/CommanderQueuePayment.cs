@@ -99,6 +99,13 @@ internal static class CommanderQueuePayment
     private static void HostPay(FactionHQ hq, string[] args)
     {
         UnitDefinition? definition = CommanderNetwork.Definition<UnitDefinition>(CommanderNetwork.Arg(args, 2));
+        if (definition is VehicleDefinition vehicle && !CommanderFactionVehicleService.CanPurchase(vehicle, hq))
+        {
+            CommanderNotice.Fail($"{vehicle.unitName} is not available to this faction.");
+            CommanderNetwork.Reply("pay.done", CommanderNetwork.Arg(args, 1), Text(0f));
+            return;
+        }
+
         float cost = definition != null ? Mathf.Max(0f, definition.value) : 0f;
         if (definition == null || cost <= 0f || !CommanderGameAccess.TrySpend(hq, cost))
         {

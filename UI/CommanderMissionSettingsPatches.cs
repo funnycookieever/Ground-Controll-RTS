@@ -32,8 +32,8 @@ namespace GroundControlRts;
 [HarmonyPatch]
 internal static class CommanderMissionSettingsPatches
 {
-    /// <summary>What "LimitToFactoryVehicles" does: the depot offers the faction's own roster (its
-    /// convoy groups) instead of every ground vehicle in the game.</summary>
+    /// <summary>What "LimitToFactoryVehicles" does: the depot offers the faction's own vehicles
+    /// plus shared equipment instead of every ground vehicle in the game.</summary>
     internal const string FactionVehiclesOnlyLabel = "Depots sell only the faction's own vehicles";
 
     /// <summary>Shared with the mission editor's Ground Control RTS rows. As a mission value 0 is Off:
