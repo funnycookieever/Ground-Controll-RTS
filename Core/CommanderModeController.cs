@@ -162,6 +162,9 @@ internal sealed class CommanderModeController : MonoBehaviour
         // Core tier: the round has to be able to end whether or not RTS mode is open.
         services.Register(new CommanderVictoryService());
 
+        // Core tier: fog of war is a rule of the match, RTS mode open or not.
+        services.Register(new CommanderFogOfWarService());
+
         // GOD DIFFICULTY's voice. Core tier: it has to speak whether or not RTS mode is open.
         services.Register(new CommanderGodService());
 

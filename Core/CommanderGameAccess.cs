@@ -144,7 +144,8 @@ internal static class CommanderGameAccess
 
         if (unit is Building)
         {
-            return true;
+            // Under fog of war a building nobody has seen is not drawn, so it is not pickable either.
+            return !CommanderSettings.FogOfWar || CommanderFogOfWarService.HasSeen(unit, localHq);
         }
 
         // A contact radar has lost is still on the map at its last known position, and it is still

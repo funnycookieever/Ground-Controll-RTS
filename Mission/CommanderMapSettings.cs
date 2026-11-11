@@ -45,6 +45,7 @@ internal static class CommanderMapSettings
     internal const string BuildRadiusPrefix = "GC Build Radius ";
     internal const string DockRadiusPrefix = "GC Naval Dock Radius ";
     internal const string AircraftCapturePrefix = "GC Aircraft Capture ";
+    internal const string FogOfWarPrefix = "GC Fog Of War ";
 
     internal const int DefaultBuilders = 2;
     internal const int MaxBuilders = 4;
@@ -57,7 +58,7 @@ internal static class CommanderMapSettings
         BuildersPrefix, HeadStartPrefix, AiIncomePrefix, BaseIncomePrefix, AiCommandersPrefix, EnemyModePrefix,
         EnemyDifficultyPrefix, HumanTeamsPrefix, FactoryVehiclesPrefix, FriendlyAiOffPrefix,
         BanVotePrefix, BansPerSidePrefix, UnitCapPrefix, ShipCapPrefix, ArtilleryCapPrefix, AircraftCapPrefix,
-        BuildRadiusPrefix, DockRadiusPrefix, AircraftCapturePrefix,
+        BuildRadiusPrefix, DockRadiusPrefix, AircraftCapturePrefix, FogOfWarPrefix,
     };
 
     // Settings are read every frame and a tag's number is a substring parse. Every write of ours goes
@@ -139,7 +140,7 @@ internal static class CommanderMapSettings
         }
 
         return prefix is AiCommandersPrefix or HumanTeamsPrefix or FriendlyAiOffPrefix or BanVotePrefix
-            or UnitCapPrefix or AircraftCapturePrefix
+            or UnitCapPrefix or AircraftCapturePrefix or FogOfWarPrefix
             ? 0f
             : null;
     }

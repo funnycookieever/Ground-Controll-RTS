@@ -1554,6 +1554,7 @@ internal sealed partial class CommanderAirCommandService
     /// <summary>Current travel point, advancing the route as the aircraft reaches each one.</summary>
     private static GlobalPosition GetActiveRoutePoint(Aircraft aircraft, AirMission mission)
     {
+        bool wrapped = false;
         while (mission.RouteIndex < mission.Route.Count)
         {
             // Travel points sit on the ground. Measured in 3D, an aircraft at height never comes within
@@ -1573,6 +1574,12 @@ internal sealed partial class CommanderAirCommandService
             }
 
             mission.RouteIndex++;
+
+            // Once per call: every point inside the radius would otherwise wrap forever.
+            if (!wrapped)
+            {
+                wrapped = mission.TryWrapRoute();
+            }
         }
 
         return mission.AreaCenter;

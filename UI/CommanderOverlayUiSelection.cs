@@ -762,11 +762,11 @@ internal sealed partial class CommanderOverlayUi
         float x = selectionBarRect.xMax - ((buttonWidth * columns) + ((columns - 1f) * 6f)) - 14f;
         bool commandable = moveService.HasCommandableSelection;
 
-        GUI.enabled = oldEnabled && commandable && moveService.CanSelectionPatrol;
+        GUI.enabled = oldEnabled && (commandable || hasAircraft) && moveService.CanSelectionPatrol;
         bool patrolling = moveService.IsSelectionPatrolling;
         if (GUI.Button(
             new Rect(x, rowY, buttonWidth, 34f),
-            new GUIContent(patrolling ? "PATROL ON" : "PATROL", "Turns a multi-point route into a loop the units keep driving while you are away."),
+            new GUIContent(patrolling ? "PATROL ON" : "PATROL", "Turns a multi-point route into a loop the units keep driving or flying while you are away."),
             patrolling ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
         {
             moveService.ToggleSelectionPatrol();

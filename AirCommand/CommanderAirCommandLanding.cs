@@ -1635,6 +1635,9 @@ internal sealed partial class CommanderAirCommandService
         {
             mission.Route.Clear();
             mission.RouteIndex = 0;
+
+            // A resupply break-off saved the patrol to resume; any other landing order ends it.
+            mission.RouteLoop &= mission.HasResumeState;
         }
 
         mission.Route.Add(field);
