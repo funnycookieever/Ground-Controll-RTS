@@ -80,6 +80,7 @@ internal static class CommanderCameraPatches
         private static float contrastValue;
         private static float saturationValue;
         private static Color colorFilterValue;
+        private static bool applied;
 
         internal static bool Prefix(
             ColorAdjustments ___colorAdjustments,
@@ -108,11 +109,18 @@ internal static class CommanderCameraPatches
 
             if (!CommanderSettings.EnhanceNightVision || level == null || ___bloom == null)
             {
-                RestoreProfile(___colorAdjustments);
-                CommanderNightVisionFillPatch.Clear();
+                // Only undo our own writes, once; otherwise leave the profile to the game and other mods.
+                if (applied)
+                {
+                    RestoreProfile(___colorAdjustments);
+                    CommanderNightVisionFillPatch.Clear();
+                    applied = false;
+                }
+
                 return true;
             }
 
+            applied = true;
             float ambient = level.GetAmbientLight();
             float exposure = CommanderCameraTuning.NightVisionExposure(
                 ___gainMin, ___gainMax, ambient, CommanderSettings.NightVisionGain);
