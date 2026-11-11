@@ -237,6 +237,13 @@ internal static class CommanderMissionSettingsPatches
             refreshers,
             forces,
             toggleTemplate,
+            "Fog of war: enemies unseen are not drawn",
+            () => Read(__instance, CommanderMapSettings.FogOfWarPrefix, CommanderSettings.FogOfWar ? 1 : 0) != 0,
+            value => Write(__instance, CommanderMapSettings.FogOfWarPrefix, value ? 1 : 0));
+        AddToggle(
+            refreshers,
+            forces,
+            toggleTemplate,
             "Unit ban vote before the match",
             () => Read(__instance, CommanderMapSettings.BanVotePrefix, CommanderSettings.UnitBansEnabled ? 1 : 0) != 0,
             value => Write(__instance, CommanderMapSettings.BanVotePrefix, value ? 1 : 0));

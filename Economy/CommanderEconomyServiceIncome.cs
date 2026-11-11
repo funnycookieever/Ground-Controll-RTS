@@ -31,10 +31,6 @@ internal sealed partial class CommanderEconomyService
     /// <summary>Income from which an AI commander buys only gold mines.</summary>
     private const float EnemyMinesOnlyIncome = 850f;
 
-    /// <summary>Late in the ladder an AI commander keeps adding income up to this many times what its
-    /// mine target would pay, so the buying stops somewhere and the money reaches the fleet.</summary>
-    private const float EnemyLateIncomeMultiple = 2f;
-
     /// <summary>Cheapest first, which is the order the BUILD window lists them in.</summary>
     private static readonly IncomeStage[] IncomeStages =
     {
@@ -277,13 +273,13 @@ internal sealed partial class CommanderEconomyService
             mineOpen);
     }
 
-    /// <summary>Income is short of what the mine target's maxed gold mines would pay, times
-    /// <paramref name="multiple"/>. Asked in income, not in mines: gas terminals count toward it, and
-    /// a count of gold mines would never be met and hold every rung behind it.</summary>
-    private bool IsBelowEnemyIncomeTarget(FactionHQ hq, float multiple = 1f)
+    /// <summary>Income is short of what the mine target's maxed gold mines would pay. Asked in income,
+    /// not in mines: gas terminals count toward it, and a count of gold mines would never be met and
+    /// hold every rung behind it.</summary>
+    private bool IsBelowEnemyIncomeTarget(FactionHQ hq)
     {
         return GetIncomePerMinute(hq)
-            < GetEnemyMineTarget(hq) * GetIncomePerMinute(CommanderBuildKind.Mine, MaxLevel) * multiple;
+            < GetEnemyMineTarget(hq) * GetIncomePerMinute(CommanderBuildKind.Mine, MaxLevel);
     }
 
     /// <summary>
@@ -292,7 +288,9 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private bool IsEnemyMineOpen(FactionHQ hq)
     {
-        if (IsGodEconomy(hq))
+        // A rich start (big authored balance, head start) skips the starters: the climb is for a
+        // commander that cannot afford a mine, not one sitting on several.
+        if (IsGodEconomy(hq) || hq.factionFunds >= GetIncomeCost(CommanderBuildKind.Mine, 0) * EnemyReserveMultiple)
         {
             return true;
         }
@@ -391,7 +389,9 @@ internal sealed partial class CommanderEconomyService
     /// <summary>What this faction's income buildings pay a minute, before the AI multiplier.</summary>
     private float GetIncomePerMinute(FactionHQ hq)
     {
-        float income = GetBaseIncomePerMinute();
+        // The AI stipend counts: a Champions commander on 100 + 75 per player is not poor, and
+        // reading only its buildings had it play like one.
+        float income = GetBaseIncomePerMinute() + GetAiStipendPerMinute(hq, CommanderGameAccess.GetLocalHq());
         foreach (KeyValuePair<Unit, int> entry in incomeLevels)
         {
             if (entry.Key != null && !entry.Key.disabled && entry.Key.NetworkHQ == hq)

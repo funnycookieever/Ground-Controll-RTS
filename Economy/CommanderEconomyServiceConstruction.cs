@@ -744,7 +744,12 @@ internal sealed partial class CommanderEconomyService
                     continue;
                 }
 
-                preview.DrawBlueprint(site.Definition, site.Site, site.Progress, site.Rotation);
+                // Fog: the host holds every faction's blueprints; it only draws its own side's.
+                if (!CommanderFogOfWarService.HidesFaction(site.Hq))
+                {
+                    preview.DrawBlueprint(site.Definition, site.Site, site.Progress, site.Rotation);
+                }
+
                 continue;
             }
 

@@ -140,6 +140,10 @@ internal sealed partial class CommanderAirCommandService
                 SetAircraftEscortOrder(aircraft, escortee);
             }
         }));
+        CommanderNetwork.OnHost("air.patrol", (hq, args) => HostOrder(
+            hq,
+            args,
+            aircraft => SetAircraftPatrol(aircraft, CommanderNetwork.Bool(args, 5))));
         CommanderNetwork.OnHost("air.clear", (hq, args) => HostOrder(hq, args, aircraft => ClearAircraftRoute(aircraft)));
         CommanderNetwork.OnHost("air.land", (hq, args) => HostOrder(hq, args, aircraft =>
         {
@@ -430,7 +434,8 @@ internal sealed partial class CommanderAirCommandService
                 CommanderNetwork.Key(mission.LandingBase),
                 CommanderNetwork.Num((int)mission.Intent),
                 CommanderNetwork.Flag(mission.Parked)
-                    + CommanderNetwork.Flag(mission.Returning),
+                    + CommanderNetwork.Flag(mission.Returning)
+                    + CommanderNetwork.Flag(mission.RouteLoop),
                 CommanderNetwork.Id(mission.EscortTarget),
                 mission.ShortfallReason,
                 string.Join(";", queued),
@@ -500,6 +505,7 @@ internal sealed partial class CommanderAirCommandService
         string flags = CommanderNetwork.Arg(args, 11);
         mission.Parked = flags.Length > 0 && flags[0] == '1';
         mission.Returning = flags.Length > 1 && flags[1] == '1';
+        mission.RouteLoop = flags.Length > 2 && flags[2] == '1';
         mission.EscortTarget = CommanderNetwork.TryUnit(args, 12, out Unit escortee) ? escortee : null;
         mission.ShortfallReason = CommanderNetwork.Arg(args, 13);
     }

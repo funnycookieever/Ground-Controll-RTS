@@ -152,7 +152,9 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         {
             for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
             {
-                if (orders.TryGetValue(selectionService.SelectedUnits[i], out UnitOrder order) && order.Loop)
+                Unit unit = selectionService.SelectedUnits[i];
+                if ((orders.TryGetValue(unit, out UnitOrder order) && order.Loop)
+                    || (unit is Aircraft aircraft && CommanderAirCommandService.Instance?.IsAircraftPatrolling(aircraft) == true))
                 {
                     return true;
                 }
@@ -169,8 +171,9 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         {
             for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
             {
-                if (orders.TryGetValue(selectionService.SelectedUnits[i], out UnitOrder order)
-                    && order.Waypoints.Count > 1)
+                Unit unit = selectionService.SelectedUnits[i];
+                if ((orders.TryGetValue(unit, out UnitOrder order) && order.Waypoints.Count > 1)
+                    || (unit is Aircraft aircraft && CommanderAirCommandService.Instance?.CanAircraftPatrol(aircraft) == true))
                 {
                     return true;
                 }
@@ -725,8 +728,12 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         bool enable = !IsSelectionPatrolling;
         for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
         {
-            if (orders.TryGetValue(selectionService.SelectedUnits[i], out UnitOrder order)
-                && order.Waypoints.Count > 1)
+            Unit unit = selectionService.SelectedUnits[i];
+            if (unit is Aircraft aircraft)
+            {
+                CommanderAirCommandService.Instance?.SetAircraftPatrol(aircraft, enable);
+            }
+            else if (orders.TryGetValue(unit, out UnitOrder order) && order.Waypoints.Count > 1)
             {
                 order.Loop = enable;
             }

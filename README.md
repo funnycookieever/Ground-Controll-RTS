@@ -40,7 +40,7 @@ Join us on **[Discord](https://discord.gg/F5DGy9ystd)**.
 - **Air Command:** launch, task and land aircraft, with loadouts and cargo runs.
 - **Capture:** take airbases with ground units or air assaults.
 - **Enemy commander:** an AI opponent with its own economy, air force and difficulty levels.
-- **Rules your way:** unit caps, unit bans, game speed and your own prices.
+- **Rules your way:** unit caps, unit bans, game speed, fog of war and your own prices.
 - **Mission editor:** tick Ground Control RTS in a mission's parameters to make your own map.
 
 ## Gallery

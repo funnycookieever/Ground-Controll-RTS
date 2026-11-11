@@ -28,6 +28,9 @@ internal static class CommanderSettings
     // The AREA FIRE slider: the diameter the next area is placed at.
     internal static float AreaFireDiameterMeters { get => Get("Gameplay", "AreaFireDiameterMeters", 1000f); set => Set("Gameplay", "AreaFireDiameterMeters", value); }
 
+    // Off by default. Enemy units are not drawn until seen: see CommanderFogOfWarService.
+    internal static bool FogOfWar { get => CommanderMapSettings.OverrideBool(CommanderMapSettings.FogOfWarPrefix) ?? Get("Gameplay", "FogOfWar", false); set => Set("Gameplay", "FogOfWar", value); }
+
     internal static bool DisableFriendlyAi { get => CommanderMapSettings.OverrideBool(CommanderMapSettings.FriendlyAiOffPrefix) ?? Get("Gameplay", "DisableFriendlyAi", false); set => Set("Gameplay", "DisableFriendlyAi", value); }
 
     // Off by default. One cap per side, both sides: see CommanderUnitCap.
@@ -561,6 +564,7 @@ internal static class CommanderSettings
         _ = EnrichmentPlantCost;
         _ = MobileArtilleryCost;
         _ = AircraftCaptureStrength;
+        _ = FogOfWar;
         _ = CaptureRecoveryPerSecond;
         _ = SupplyFuelCapacityKg;
         _ = StartingFuelKg;

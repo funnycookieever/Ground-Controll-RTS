@@ -323,6 +323,7 @@ internal static class CommanderMissionEditorPatches
         Row("Enemy AI also runs teams with players", CommanderMapSettings.HumanTeamsPrefix, string.Empty, 2, i => i, OffOn, 0);
         Row(CommanderMissionSettingsPatches.FactionVehiclesOnlyLabel, CommanderMapSettings.FactoryVehiclesPrefix, string.Empty, 2, i => i, OffOn, 0);
         Row("Friendly AI off: only units you spawn", CommanderMapSettings.FriendlyAiOffPrefix, string.Empty, 2, i => i, OffOn, 0);
+        Row("Fog of war: enemies unseen are not drawn", CommanderMapSettings.FogOfWarPrefix, string.Empty, 2, i => i, OffOn, 0);
         Row("Unit ban vote before the match", CommanderMapSettings.BanVotePrefix, string.Empty, 2, i => i, OffOn, 0);
         Row("Voted bans per side", CommanderMapSettings.BansPerSidePrefix, string.Empty, 21, i => i, i => i == 0 ? "None" : Number(i), 2);
         Row("Unit Cap", CommanderMapSettings.UnitCapPrefix, string.Empty, CommanderUnitCap.ModeCount + 1, i => i, CommanderMissionSettingsPatches.UnitCapLabel, 0);

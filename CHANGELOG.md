@@ -1,16 +1,11 @@
 ﻿# Changelog
 
-## Unreleased
-
-### Fixed
-
-- Faction limited depot setting now includes only faction specific and shared vehicles (M12 Jackknife and vehicles deployable using trasnport).
-- Fixed BDF StratoLance launcher elevation on deploy.
-
 ## 1.0.0.2
 
 ### Added
 
+- New map setting: Fog of war. Enemy units and buildings are not drawn in the world until your side has seen them by eye or radar. Buildings stay visible once seen; vehicles, ships and aircraft only while they are being seen. Off by default; set it in Customize Mission's GC RTS Settings or the mission editor.
+- PATROL works for aircraft: give two or more travel points and the aircraft flies the loop until given another order, picking it up again after a rearm.
 - IR SAMs have a TARGETS button: MISSILES ONLY makes them ignore aircraft and ground units and only shoot at incoming missiles.
 - Unit prices can be saved with a map. Set them from the mission editor or the mission settings, and everyone playing that map uses them.
 - New map setting: Base income per minute, paid to every side on top of normal income.
@@ -36,7 +31,8 @@
 - AI pilots on the bundled maps fly with twice the skill. Champions GOD starts with 15000, lighter weather and higher clouds.
 
 ### Fixed
-
+- Faction limited depot setting now includes only faction specific and shared vehicles (M12 Jackknife and vehicles deployable using trasnport).
+- Fixed BDF StratoLance launcher elevation on deploy.
 - Helicopter and VTOL pads count as taken when a unit is standing on them.
 - Destroyed supply stores no longer break warhead stockpiles.
 - AI radar SAM launchers no longer drive off at the player like a convoy after a base changes hands.

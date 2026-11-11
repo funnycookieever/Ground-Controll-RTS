@@ -309,6 +309,10 @@ internal sealed partial class CommanderAirCommandService
 
         internal int RouteIndex { get; set; }
 
+        /// <summary>PATROL: the route starts over at its first point instead of ending. Survives a
+        /// resupply break-off, which swaps <see cref="Route"/> for the trip to the field.</summary>
+        internal bool RouteLoop { get; set; }
+
         /// <summary>
         /// Explicitly commanded target; preferred over the automatic mission target search.
         /// Assigning one replaces the whole queue behind it, so every existing path that drops the
@@ -415,6 +419,19 @@ internal sealed partial class CommanderAirCommandService
 
             forcedTarget = null;
             return false;
+        }
+
+        /// <summary>Back to the first travel point once the last is passed, when patrolling a route
+        /// of two or more and not on a landing order.</summary>
+        internal bool TryWrapRoute()
+        {
+            if (!RouteLoop || LandingBase != null || Route.Count < 2 || RouteIndex < Route.Count)
+            {
+                return false;
+            }
+
+            RouteIndex = 0;
+            return true;
         }
     }
 }

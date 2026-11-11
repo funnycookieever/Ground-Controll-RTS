@@ -440,6 +440,7 @@ internal sealed partial class CommanderAirCommandService
         {
             mission.Route.Clear();
             mission.RouteIndex = 0;
+            mission.RouteLoop = false;
         }
 
         if (queueTarget)
@@ -528,6 +529,7 @@ internal sealed partial class CommanderAirCommandService
         mission.ResumeRoute.Clear();
         mission.Route.Clear();
         mission.RouteIndex = 0;
+        mission.RouteLoop = false;
         mission.ForcedTarget = null;
         mission.IgnoreGroundThreats = false;
         mission.Returning = false;
@@ -571,6 +573,7 @@ internal sealed partial class CommanderAirCommandService
         mission.ResumeRoute.Clear();
         mission.Route.Clear();
         mission.RouteIndex = 0;
+        mission.RouteLoop = false;
         mission.ForcedTarget = null;
         mission.IgnoreGroundThreats = false;
         mission.AreaCenter = aircraft.GlobalPosition();
@@ -620,6 +623,32 @@ internal sealed partial class CommanderAirCommandService
         return false;
     }
 
+    internal bool IsAircraftPatrolling(Aircraft aircraft)
+    {
+        return missions.TryGetValue(aircraft, out AirMission mission) && mission.RouteLoop;
+    }
+
+    /// <summary>True when the aircraft's own route (or the one a resupply will resume) has two or more points.</summary>
+    internal bool CanAircraftPatrol(Aircraft aircraft)
+    {
+        return missions.TryGetValue(aircraft, out AirMission mission)
+            && (mission.HasResumeState ? mission.ResumeRoute.Count : mission.LandingBase == null ? mission.Route.Count : 0) > 1;
+    }
+
+    /// <summary>PATROL for an aircraft: its travel points become a loop, or back into a one-shot route.</summary>
+    internal void SetAircraftPatrol(Aircraft aircraft, bool enable)
+    {
+        if (ForwardAir("air.patrol", aircraft, CommanderNetwork.Flag(enable)))
+        {
+            return;
+        }
+
+        if (CanAircraftPatrol(aircraft))
+        {
+            missions[aircraft].RouteLoop = enable;
+        }
+    }
+
     /// <summary>The unit an escort order has this aircraft guarding, if any.</summary>
     internal Unit? GetEscortTarget(Aircraft aircraft)
     {
@@ -641,6 +670,7 @@ internal sealed partial class CommanderAirCommandService
         }
 
         GlobalPosition at = aircraft.GlobalPosition();
+        bool wrapped = false;
         while (mission.RouteIndex < mission.Route.Count)
         {
             point = mission.Route[mission.RouteIndex];
@@ -652,6 +682,10 @@ internal sealed partial class CommanderAirCommandService
             }
 
             mission.RouteIndex++;
+            if (!wrapped)
+            {
+                wrapped = mission.TryWrapRoute();
+            }
         }
 
         return false;
