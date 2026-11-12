@@ -41,6 +41,24 @@ internal static class CommanderAreaFirePatches
         }
     }
 
+    [HarmonyPatch(typeof(Missile), nameof(Missile.InterceptPriority))]
+    internal static class InterceptPriorityPatch
+    {
+        internal static void Postfix(Missile __instance, Unit toUnit, float minRange, ref float __result)
+        {
+            CommanderAreaFire.InterceptPriorityPostfix(__instance, toUnit, minRange, ref __result);
+        }
+    }
+
+    [HarmonyPatch(typeof(FireControl), nameof(FireControl.DeployOrStowLaunchers))]
+    internal static class DeployOrStowPatch
+    {
+        internal static bool Prefix(FireControl __instance, bool deploying)
+        {
+            return CommanderAreaFire.DeployOrStowPrefix(__instance, deploying);
+        }
+    }
+
     [HarmonyPatch(typeof(Missile), nameof(Missile.Detonate), new[] { typeof(UnityEngine.Vector3), typeof(bool), typeof(bool) })]
     internal static class MissileDetonatePatch
     {

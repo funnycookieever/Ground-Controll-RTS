@@ -176,6 +176,20 @@ internal static class CommanderDepotLane
         CommanderRepairService.Instance?.SetHome(trailer, spot);
     }
 
+    internal static bool IsVehicleNear(GlobalPosition spot, Unit? except = null)
+    {
+        int hits = Physics.OverlapSphereNonAlloc(spot.ToLocalPosition(), RescueClearMeters, RescueHits, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits; i++)
+        {
+            if (RescueHits[i] != null && RescueHits[i].GetComponentInParent<Unit>() is GroundVehicle vehicle && vehicle != except)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static void FreeStuckAt(VehicleDepot depot, BuildingDefinition definition, CommanderBuildPreview preview)
     {
         Vector3 half = preview.GetFootprint(definition);
@@ -246,20 +260,6 @@ internal static class CommanderDepotLane
         }
 
         spot = default;
-        return false;
-    }
-
-    private static bool IsVehicleNear(GlobalPosition spot, Unit? except = null)
-    {
-        int hits = Physics.OverlapSphereNonAlloc(spot.ToLocalPosition(), RescueClearMeters, RescueHits, ~0, QueryTriggerInteraction.Ignore);
-        for (int i = 0; i < hits; i++)
-        {
-            if (RescueHits[i] != null && RescueHits[i].GetComponentInParent<Unit>() is GroundVehicle vehicle && vehicle != except)
-            {
-                return true;
-            }
-        }
-
         return false;
     }
 }

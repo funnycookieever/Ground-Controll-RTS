@@ -142,6 +142,14 @@ internal sealed partial class CommanderEnemyCommanderService
     /// is far too loose for this — a rearmer serves what is parked beside it.</summary>
     private const float RearmArrivedMeters = 60f;
 
+    /// <summary>A guard munitions truck below this much of its load drives to a bunker to refill
+    /// instead of taking runs to dry defenders.</summary>
+    private const float GuardTruckDryBelow = 0.1f;
+
+    /// <summary>A truck this close to a bunker loads from it. A bunker is big and the truck stops
+    /// short of its centre, so wider than <see cref="RearmArrivedMeters"/>; the strike truck's figure.</summary>
+    private const float TruckRestockReachMeters = 150f;
+
     /// <summary>
     /// How far out a tracked hostile counts as an attack on the base. This is the "it can see it on
     /// the radar" range, so it is deliberately far wider than weapon range: the point is to be
@@ -206,6 +214,10 @@ internal sealed partial class CommanderEnemyCommanderService
     private readonly List<Unit> defenceCandidates = new();
     private readonly List<Unit> staleDefenders = new();
     private readonly List<Unit> relinkScratch = new();
+
+    /// <summary>Guard munitions trucks sent to a dry defender this review: they leave their post
+    /// for it, and the support review does not pin them back.</summary>
+    private readonly HashSet<Unit> rearmRuns = new();
     private readonly List<GlobalPosition> baseCentres = new();
     private readonly List<int> baseCounts = new();
     private readonly List<int> depotKeys = new();
@@ -839,7 +851,7 @@ internal sealed partial class CommanderEnemyCommanderService
             && !IsAaScout(unit)
             && (IsHomeGuardType(unit) || IsNearOwnBase(hq, unit.transform.GlobalPosition(), RecruitRadiusMeters))
             && !(CommanderCaptureService.Instance?.IsOnEnemyDrive(unit) ?? false)
-            && !(IsNuclearArmed(hq) && CommanderFactionVehicleService.GetWarheadCost(unit.definition) > 0);
+            && CommanderFactionVehicleService.GetWarheadCost(unit.definition) == 0;
     }
 
     /// <summary>The centre of the own base nearest this unit, as recorded against the posts.</summary>
@@ -1150,9 +1162,9 @@ internal sealed partial class CommanderEnemyCommanderService
     /// bunker, or one of its trucks. An empty shelf is skipped, because driving a dry launcher to a
     /// dry bunker takes it out of the ring for nothing.
     /// </summary>
-    private static bool TryFindRearmSource(FactionHQ hq, CommanderState state, Unit defender, out GlobalPosition position)
+    private static bool TryFindRearmSource(FactionHQ hq, CommanderState state, Unit defender, bool buildingsOnly, out Unit? store)
     {
-        position = default;
+        store = null;
         if (hq.factionUnits == null)
         {
             return false;
@@ -1168,7 +1180,7 @@ internal sealed partial class CommanderEnemyCommanderService
                 || unit.disabled
                 || ReferenceEquals(unit, defender)
                 || CommanderSupplyStoreService.GetAmmoFraction(unit) <= 0f
-                || (unit is not Building && !state.Support.ContainsKey(unit)))
+                || (unit is not Building && (buildingsOnly || !state.Support.ContainsKey(unit))))
             {
                 continue;
             }
@@ -1178,11 +1190,72 @@ internal sealed partial class CommanderEnemyCommanderService
             if (distance < best)
             {
                 best = distance;
-                position = unit.transform.GlobalPosition();
+                store = unit;
             }
         }
 
-        return best < float.MaxValue;
+        return store != null;
+    }
+
+    /// <summary>
+    /// The nearest guard munitions truck with ordnance aboard and no run this review.
+    /// <paramref name="busy"/> says the guard has a truck, out on a run or off reloading at a
+    /// bunker, so the defender waits on its post for it rather than driving off itself.
+    /// </summary>
+    private static Unit? FindGuardTruck(CommanderState state, HashSet<Unit> rearmRuns, Unit defender, out bool busy)
+    {
+        busy = false;
+        Unit? best = null;
+        float bestDistance = float.MaxValue;
+        foreach (Unit truck in state.Support.Keys)
+        {
+            if (truck == null || truck.disabled || !IsRearmVehicle(truck))
+            {
+                continue;
+            }
+
+            if (rearmRuns.Contains(truck) || CommanderSupplyStoreService.GetAmmoFraction(truck) < GuardTruckDryBelow)
+            {
+                busy = true;
+                continue;
+            }
+
+            float distance = CommanderGameAccess.HorizontalDistance(defender.transform.position, truck.transform.position);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = truck;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// A dry munitions truck drives to the nearest stocked bunker and refills there, the only way
+    /// an AI truck gets ordnance (the AI top-up never buys into one). The base game's own restock
+    /// drive is overridden by the pins, so it is done here. True while the truck is on that errand.
+    /// </summary>
+    private static bool DriveToRestock(FactionHQ hq, CommanderState state, Unit truck)
+    {
+        CommanderSupplyStoreService? stores = CommanderSupplyStoreService.Instance;
+        if (stores == null
+            || CommanderSupplyStoreService.GetAmmoFraction(truck) >= GuardTruckDryBelow
+            || !TryFindRearmSource(hq, state, truck, buildingsOnly: true, out Unit? bunker))
+        {
+            return false;
+        }
+
+        if (FastMath.InRange(truck.transform.GlobalPosition(), bunker!.transform.GlobalPosition(), TruckRestockReachMeters))
+        {
+            stores.RefillTruck(truck, bunker);
+        }
+        else
+        {
+            PinTo(truck, bunker.transform.GlobalPosition());
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1525,6 +1598,7 @@ internal sealed partial class CommanderEnemyCommanderService
         state.WantsDefenceUnit = state.Defenders.Count < target
             || CountAirDefenders(state) - CountRingLaunchers(state) < airTarget;
 
+        rearmRuns.Clear();
         foreach (KeyValuePair<Unit, int> entry in state.Defenders)
         {
             // A radar-guided launcher stands on the site post whatever it was assigned, because that
@@ -1533,18 +1607,33 @@ internal sealed partial class CommanderEnemyCommanderService
             GlobalPosition spot = GetSlot(state, entry.Key, station % state.DefencePosts.Count);
 
             // A defender that has shot itself dry is a vehicle-shaped hole in the ring, and nothing
-            // in the game drives it off to restock: it holds the post it was pinned to until
-            // something kills it. Below the threshold it goes to the nearest shelf instead and comes
-            // back on its own, because the next review reads a full rack and sends it to its post.
+            // in the game drives it off to restock. A guard munitions truck drives out to it and the
+            // defender holds its post, even while every truck is busy or reloading. A SAM-site
+            // launcher never leaves its site (the guard buys it a truck); only another defender with
+            // no guard truck at all goes to the nearest shelf itself.
             float ammo = CommanderGameAccess.GetUnitAmmo(entry.Key);
-            if (ammo >= 0f && ammo < DefenceRearmBelow && TryFindRearmSource(hq, state, entry.Key, out GlobalPosition store))
+            if (ammo >= 0f && ammo < DefenceRearmBelow)
             {
-                if (!FastMath.InRange(entry.Key.transform.GlobalPosition(), store, RearmArrivedMeters))
+                Unit? truck = FindGuardTruck(state, rearmRuns, entry.Key, out bool truckBusy);
+                if (truck != null)
                 {
-                    PinTo(entry.Key, store);
+                    rearmRuns.Add(truck);
+                    if (!FastMath.InRange(truck.transform.GlobalPosition(), entry.Key.transform.GlobalPosition(), RearmArrivedMeters))
+                    {
+                        PinTo(truck, entry.Key.transform.GlobalPosition());
+                    }
                 }
+                else if (!truckBusy
+                    && !IsSamSiteLauncher(entry.Key)
+                    && TryFindRearmSource(hq, state, entry.Key, buildingsOnly: false, out Unit? store))
+                {
+                    if (!FastMath.InRange(entry.Key.transform.GlobalPosition(), store!.transform.GlobalPosition(), RearmArrivedMeters))
+                    {
+                        PinTo(entry.Key, store.transform.GlobalPosition());
+                    }
 
-                continue;
+                    continue;
+                }
             }
 
             HoldAt(entry.Key, SettleIfStuck(state, entry.Key, spot));
@@ -1712,8 +1801,30 @@ internal sealed partial class CommanderEnemyCommanderService
         state.SiteRadarDepot = ChooseSiteTruckDepot(hq, state, sites, siteRadars);
         state.SiteFireControlDepot = ChooseSiteTruckDepot(hq, state, sites, siteFireControls);
 
+        // A manned site with no munitions truck of its own buys one, and every manned site gets a
+        // munitions bunker near it, so neither the launchers nor the truck drive back to a base.
+        state.WantsGuardTruck = trucks < manned;
+        for (int i = 0; i < sites && i < state.DefencePosts.Count; i++)
+        {
+            if (siteLaunchers[i] > 0)
+            {
+                CommanderEconomyService.Instance?.EnsureEnemySiteBunker(hq, state.DefencePosts[i]);
+            }
+        }
+
         foreach (KeyValuePair<Unit, int> entry in state.Support)
         {
+            // Out on a run to a dry defender: the defence review pinned it there.
+            if (rearmRuns.Contains(entry.Key))
+            {
+                continue;
+            }
+
+            if (IsRearmVehicle(entry.Key) && DriveToRestock(hq, state, entry.Key))
+            {
+                continue;
+            }
+
             // A site's radar and fire control never settle short of it: the link is 300 m, so a truck
             // set up a kilometre out leaves the launcher silent however long it stands there.
             GlobalPosition spot = GetSlot(state, entry.Key, entry.Value % state.DefencePosts.Count);
@@ -1785,6 +1896,11 @@ internal sealed partial class CommanderEnemyCommanderService
         for (int i = 0; i < defenceCandidates.Count; i++)
         {
             Unit truck = defenceCandidates[i];
+            if (DriveToRestock(hq, state, truck))
+            {
+                continue;
+            }
+
             GlobalPosition destination = hasConvoy
                 ? convoy
                 : state.DefencePosts[(spare + i) % state.DefencePosts.Count];

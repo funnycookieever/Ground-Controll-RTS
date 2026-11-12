@@ -82,6 +82,9 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
     /// <summary>One AI supply purchase: a tenth of a shelf.</summary>
     private const float AiPurchaseFraction = 0.1f;
 
+    /// <summary>The AI tops a fuel or ammunition shelf up while it is under this share of full.</summary>
+    private const float AiRestockBelow = 0.3f;
+
     /// <summary>Words in a building's name that mean "this holds fuel".</summary>
     private static readonly string[] FuelStoreNameHints = { "fuel", "storage tank", "tank farm", "depot" };
 
@@ -1418,9 +1421,9 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
     }
 
     /// <summary>
-    /// Only a shelf down to its last tenth gets a tenth more. Keeping every shelf over half full put
-    /// the AI's money into fuel and ordnance nothing ever drew; what a spawn needs beyond that comes
-    /// from <see cref="TopUpForSpawn"/>.
+    /// The AI's auto-buy: a shelf under <see cref="AiRestockBelow"/> gets a tenth more each review.
+    /// Keeping every shelf over half full put the AI's money into fuel and ordnance nothing ever
+    /// drew; what a spawn needs beyond that comes from <see cref="TopUpForSpawn"/>.
     /// </summary>
     internal float TopUp(FactionHQ hq, List<Unit> stores, float budget)
     {
@@ -1428,13 +1431,13 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         for (int i = 0; i < stores.Count && spent < budget; i++)
         {
             Unit store = stores[i];
-            if (GetFuelKg(store) < GetFuelCapacityKg(store) * AiPurchaseFraction)
+            if (GetFuelKg(store) < GetFuelCapacityKg(store) * AiRestockBelow)
             {
                 spent += BuyAiFuel(hq, store, budget - spent);
             }
 
             Rearmer? rearmer = GetRearmer(store);
-            if (rearmer != null && rearmer.Capacity < rearmer.GetMaxCapacity() * AiPurchaseFraction)
+            if (rearmer != null && rearmer.Capacity < rearmer.GetMaxCapacity() * AiRestockBelow)
             {
                 spent += BuyAiAmmo(hq, store, rearmer, budget - spent);
             }
@@ -1571,11 +1574,13 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
     /// <summary>The ammunition twin of <see cref="BuyAiFuel"/>.</summary>
     private static float BuyAiAmmo(FactionHQ hq, Unit store, Rearmer rearmer, float budget)
     {
+        // A truck or dump has no BUY for the AI either: it fills at a bunker, or a dry truck
+        // topped up where it stands never drives back to restock.
         float shelf = rearmer.GetMaxCapacity();
         float wanted = Mathf.Min(shelf * AiPurchaseFraction, shelf - rearmer.Capacity);
         float cost = CommanderSettings.SupplyAmmoPurchaseCost
             * (wanted / (shelf * CommanderSettings.SupplyPurchaseFraction));
-        if (wanted <= 1f || cost > budget || !CommanderGameAccess.TrySpend(hq, cost))
+        if (IsTruckFed(store) || wanted <= 1f || cost > budget || !CommanderGameAccess.TrySpend(hq, cost))
         {
             return 0f;
         }
@@ -1880,7 +1885,7 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
         float wanted = Mathf.Min(shelf * AiPurchaseFraction, shelf - GetFuelKg(store));
         float cost = CommanderSettings.SupplyFuelPurchaseCost
             * (wanted / (FuelCapacityKg * CommanderSettings.SupplyPurchaseFraction));
-        if (wanted <= 1f || cost > budget || !CommanderGameAccess.TrySpend(hq, cost))
+        if (IsTruckFed(store) || wanted <= 1f || cost > budget || !CommanderGameAccess.TrySpend(hq, cost))
         {
             return 0f;
         }

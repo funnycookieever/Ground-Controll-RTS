@@ -41,11 +41,11 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
     /// 20 m, so this is past the doorway and, on any normal depot, outside its walls.</summary>
     private const float VergeLaneOffsetMeters = 30f;
 
-    /// <summary>Formation slots a unit may skip past buildings before it takes the one it has.</summary>
-    private const int MaxRallySlotSkips = 16;
+    /// <summary>The centre plus five rings (125 m out); the slot count wraps after these.</summary>
+    private const int RallySlotsKept = 40;
 
-    /// <summary>The centre plus two rings (50 m out); the slot count wraps after these.</summary>
-    private const int RallySlotsKept = 16;
+    /// <summary>Formation slots a unit may skip past buildings or parked vehicles: every slot once.</summary>
+    private const int MaxRallySlotSkips = RallySlotsKept + 1;
 
     /// <summary>Height change between two drive samples, 10 m apart, that no vehicle drives over
     /// (about 30 degrees). A staging point past a cliff edge was a unit driven off it.</summary>
@@ -1129,7 +1129,10 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
     /// </summary>
     private static bool IsBlockedRallySlot(DepotSpawnQueue queue, Unit unit, GlobalPosition slot)
     {
-        if (CommanderBuildPreview.IsBuiltOver(slot, RallyClearanceMeters))
+        // A staged unit stays on its slot until ordered away, so after the slot count wraps a slot
+        // can still hold one: a unit sent there bumped into it and backed off for ever.
+        if (CommanderBuildPreview.IsBuiltOver(slot, RallyClearanceMeters)
+            || CommanderDepotLane.IsVehicleNear(slot, unit))
         {
             return true;
         }
@@ -1260,10 +1263,11 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
                     RallyFormationSpacingMeters);
             }
 
-            if (tries == MaxRallySlotSkips && queue.IsDefaultRallyPoint)
+            if (tries == MaxRallySlotSkips)
             {
-                // Nothing around it is clear: the staging point itself was checked when it was chosen.
-                rallyDestination = queue.RallyPoint;
+                // Every slot is built over or taken: park where it stands rather than on top of
+                // another unit. The order still pins it, so it does not drive itself at the enemy.
+                rallyDestination = unit.GlobalPosition();
             }
 
             if (!CommanderGameAccess.TrySetDestination(unit, rallyDestination))
@@ -2090,8 +2094,8 @@ internal sealed class CommanderSpawnService : ICommanderActivate, ICommanderDeac
         internal GlobalPosition RallyPoint { get; set; }
 
         /// <summary>
-        /// Wraps after <see cref="RallySlotsKept"/>, so later units are not sent to ever-wider rings. The
-        /// units that took the first slots have long since been ordered away.
+        /// Wraps after <see cref="RallySlotsKept"/>, so later units are not sent to ever-wider rings.
+        /// Slots still held by a parked unit are skipped (<see cref="IsBlockedRallySlot"/>).
         /// </summary>
         internal int NextRallySlot
         {

@@ -442,6 +442,25 @@ internal sealed partial class CommanderEconomyService
         return false;
     }
 
+    /// <summary>
+    /// A munitions bunker beside a manned SAM site, so its launchers and guard truck restock there
+    /// instead of a base's bunker kilometres back. Placement keeps it inside the build radius. Unlike
+    /// a dump it has a BUY, so the AI top-up keeps it stocked.
+    /// </summary>
+    internal void EnsureEnemySiteBunker(FactionHQ hq, GlobalPosition site)
+    {
+        BuildingDefinition? bunker = ResolveCategoryDefinition(BuildingType.AMMO, preferDearest: true);
+        if (bunker == null
+            || HasBuildingNear(hq, BuildingType.AMMO, site, BaseSiteMaxMeters + 100f)
+            || CountBlueprints(hq) >= GetEnemyBlueprintLimit(hq)
+            || !TryFindSiteNear(hq, bunker, site, out GlobalPosition at))
+        {
+            return;
+        }
+
+        QueueEnemyBlueprint(hq, CommanderBuildKind.Structure, bunker, null, at, GetStructureCost(bunker), GetStructureLabel(bunker));
+    }
+
     /// <summary>How far an ammo dump reaches to rearm a vehicle beside it, off the prefab
     /// (<c>Rearmer.Range</c> is asset data), or 0 when the game has no dump.</summary>
     internal float GetDumpReach()

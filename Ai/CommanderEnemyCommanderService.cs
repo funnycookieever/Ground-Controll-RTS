@@ -1286,6 +1286,7 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
         // and this buys the truck.
         spendable -= landless ? 0f : TryBuyFireControl(hq, state, spendable);
         spendable = Mathf.Max(0f, spendable - (landless ? 0f : TryBuySiteRadar(hq, state)));
+        spendable -= landless ? 0f : TryBuyGuardTruck(hq, state, spendable);
 
         // The launcher itself, out of a fund, because it is the one piece of the commander's air
         // defence a weighted convoy roll will never reach for.
@@ -1797,6 +1798,40 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     }
 
     /// <summary>
+    /// A munitions truck for a SAM site that has none, so a dry StratoLance is rearmed on its post
+    /// instead of driving to a bunker. The convoy rule only buys trucks past sixteen combat vehicles.
+    /// </summary>
+    private float TryBuyGuardTruck(FactionHQ hq, CommanderState state, float spendable)
+    {
+        if (!state.WantsGuardTruck)
+        {
+            return 0f;
+        }
+
+        // One at a time: the reserve's truck rolls out and the guard claims it next review.
+        VehicleDefinition? truck = ChooseSupplyTruck(spendable);
+        if (truck == null || hq.GetUnitSupply(truck) > 0)
+        {
+            return 0f;
+        }
+
+        float cost = Mathf.Max(0f, truck.value);
+        if (!CommanderGameAccess.TrySpend(hq, cost))
+        {
+            return 0f;
+        }
+
+        hq.ModifyUnitSupply(truck, 1);
+        NoteOwned(truck);
+        state.WantsGuardTruck = false;
+        TotalPurchases++;
+        CommanderPlugin.Log.LogInfo(
+            $"Enemy commander ({hq.faction.name}) bought a {CommanderGameAccess.GetVehicleLabel(truck)} "
+                + $"for {cost:0} to rearm its SAM site.");
+        return cost;
+    }
+
+    /// <summary>
     /// One fire-control truck for the home guard's launcher. Once only: the guard parks the truck,
     /// the launcher and a radar on one post, and a second truck adds nothing a third vehicle on that
     /// post could use.
@@ -2174,8 +2209,8 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
             // of the launchers, and nothing drives an enemy commander's trailer anywhere: the
             // tractor machinery is the player's (CommanderMobileEmplacementService, local HQ only),
             // so a bought trailer stands at the depot it spawned beside for the rest of the match.
-            // Never a nuclear launcher either: its uranium gate refuses it at the depot, and under GOD
-            // DIFFICULTY, where that gate is lifted, ReviewGodNukes alone decides how many there are.
+            // Never a nuclear launcher either: ReviewGodNukes alone decides how many there are, against
+            // the uranium in store (or the god's gift).
             if (CommanderGameAccess.IsTrailerVehicleDefinition(definition)
                 || CommanderFactionVehicleService.GetWarheadCost(definition) > 0)
             {
@@ -2586,6 +2621,9 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
 
         /// <summary>A site with a launcher on it has no radar truck.</summary>
         internal bool WantsSiteRadar { get; set; }
+
+        /// <summary>A site with a launcher on it has no munitions truck to rearm it.</summary>
+        internal bool WantsGuardTruck { get; set; }
 
         internal int DefenceBaseCount { get; set; } = -1;
 

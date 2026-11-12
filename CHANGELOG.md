@@ -6,6 +6,10 @@
 
 - A damaged aircraft's COND now counts its wings, engines and every other part, not just the cockpit, so a badly hit aircraft no longer reads 100%.
 - Remove area fire fro balistic and nucelar balistic launchers
+- Air defence now tries to shoot down area-fire shells, rockets and ballistic missiles that have no locked target, aimed at the spot where they will land.
+- Ballistic launchers given a target now launch locked on to it instead of at the spot it stood, and on an area they lock on to a known enemy inside it when there is one.
+- A ballistic launcher's erector no longer freezes half raised when it is told to stow and raise again close together, so it finishes setting up and can fire.
+- AI commander: a dry StratoLance (or any home-guard defender) now waits on its post while a munitions truck drives out to rearm it, instead of driving itself to a bunker. The AI buys a munitions truck for every SAM site that has none, builds a munitions bunker near each manned site, and its empty trucks (base and convoy) drive to the nearest bunker to refill. StratoLances never leave their site to restock. AI fuel and ammo shelves are now restocked whenever they drop under 30%; the AI no longer buys ammo or fuel straight into a truck or dump where it stands.
 ## 1.0.0.2
 
 ### Added

@@ -108,20 +108,25 @@ internal static class CommanderFactionVehiclePatches
             return false;
         }
 
-        if (CommanderEnemyCommanderService.HoldsArtilleryAt(__instance!, vehicleDefinition)
-            || CommanderEnemyCommanderService.HoldsSamLauncherAt(__instance!, vehicleDefinition)
-            || CommanderEnemyCommanderService.HoldsSiteTruckAt(__instance!, vehicleDefinition)
-            || CommanderEnemyCommanderService.HoldsAssaultAtIsland(__instance!, vehicleDefinition))
+        // The AI commander's routing (artillery, SAM and site trucks to its chosen depot, assault off
+        // islands) is for its own reserve roll-out. A player's queue on an AI-commanded side (AI
+        // COMMANDERS: BOTH) calls straight in, and held there it waited at the head for ever.
+        bool automatic = CommanderFactionVehicleService.AutomaticDeploymentHq != null;
+        if (automatic
+            && (CommanderEnemyCommanderService.HoldsArtilleryAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsSamLauncherAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsSiteTruckAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsAssaultAtIsland(__instance!, vehicleDefinition)))
         {
             __result = false;
             return false;
         }
 
         // The queue checks the tier, but the game deploys reserve units through here on its own.
-        // The AI picks its catalog by its best depot already (CommanderEnemyCommanderService).
+        // The AI buys by its best depot, so a low depot refusing here lets DeployVehicles offer the
+        // unit to the next depot in turn, until the one at the right tier takes it.
         if (CommanderEconomyService.Instance != null
             && !CommanderDraftService.IsDraftMission
-            && !CommanderUnitCap.IsAiSide(__instance!.NetworkHQ)
             && CommanderEconomyService.GetDepotLevel(CommanderGameAccess.GetDepotOwner(__instance))
                 < CommanderEconomyService.GetRequiredDepotLevel(vehicleDefinition))
         {
@@ -148,8 +153,9 @@ internal static class CommanderFactionVehiclePatches
 
         // An AI side leaves a third of the cap for its aircraft and ships, and fields no more than
         // 60% of it in one vehicle. Either way the vehicle waits in the reserve.
-        if ((CommanderUnitCap.IsAiSide(hq) && CommanderUnitCap.IsGroundFull(hq))
-            || CommanderUnitCap.IsAiTypeFull(hq, vehicleDefinition))
+        if (automatic
+            && ((CommanderUnitCap.IsAiSide(hq) && CommanderUnitCap.IsGroundFull(hq))
+                || CommanderUnitCap.IsAiTypeFull(hq, vehicleDefinition)))
         {
             __result = false;
             return false;
