@@ -25,6 +25,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
     private const float ReportStaleSeconds = 10f;
     private const float LineRefreshSeconds = 1f;
     private const int EntryArgs = 3;
+    private const string AiOwner = "AI Commander";
 
     /// <summary>A queue's worth of runs, and queues per player: a guest's report has to stay small.</summary>
     private const int MaxRunsPerQueue = 12;
@@ -208,6 +209,66 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
                 }
             }
         }
+
+        scratch.Clear();
+        if (hq != null && CollectAiReserve(hq, scratch))
+        {
+            AddEntries(entries, new Report(AiOwner, scratch.ToArray(), Time.time), 0f);
+        }
+    }
+
+    /// <summary>
+    /// What an AI commander playing <paramref name="hq"/> has bought and not yet rolled out, as one
+    /// queue entry at the depot it deploys from first. The AI buys into the faction reserve, not a
+    /// depot queue, so without this a player on its team never saw what was coming.
+    /// </summary>
+    private bool CollectAiReserve(FactionHQ hq, List<string> args)
+    {
+        if (CommanderEnemyCommanderService.EffectiveMode == CommanderEnemyCommanderService.ModeOff
+            || !CommanderUnitCap.IsAiSide(hq))
+        {
+            return false;
+        }
+
+        VehicleDepot? depot = null;
+        List<(VehicleDepot, float)>? depots = CommanderCaptureSpoils.DepotsRef(hq);
+        for (int i = 0; depots != null && i < depots.Count && depot == null; i++)
+        {
+            depot = depots[i].Item1 != null && !depots[i].Item1.disabled ? depots[i].Item1 : null;
+        }
+
+        if (depot == null)
+        {
+            return false;
+        }
+
+        // A player's own queued units take reserve units at the door: those are already in their QUEUE box.
+        bool local = ReferenceEquals(hq, CommanderGameAccess.GetLocalHq());
+        StringBuilder runs = new();
+        int count = 0;
+        foreach (KeyValuePair<VehicleDefinition, FactionHQ.RuntimeSupply> entry in hq.VehicleSupply)
+        {
+            int waiting = entry.Key == null ? 0 : entry.Value.Count - (local ? spawnService.CountQueued(entry.Key, unpaidOnly: true) : 0);
+            if (waiting <= 0 || count >= MaxRunsPerQueue)
+            {
+                continue;
+            }
+
+            runs.Append(count++ > 0 ? "," : string.Empty)
+                .Append(entry.Key!.jsonKey)
+                .Append(':')
+                .Append(CommanderNetwork.Num(waiting));
+        }
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        args.Add(CommanderNetwork.Id(depot));
+        args.Add(CommanderNetwork.Num(-1f));
+        args.Add(runs.ToString());
+        return true;
     }
 
     private void SyncTeamQueues(FactionHQ hq, List<string[]> messages)
@@ -249,6 +310,16 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
                 args.Add(scratch[i + 1]);
                 args.Add(scratch[i + 2]);
             }
+        }
+
+        scratch.Clear();
+        if (CollectAiReserve(hq, scratch))
+        {
+            args.Add("ai");
+            args.Add(AiOwner);
+            args.Add(scratch[0]);
+            args.Add(scratch[1]);
+            args.Add(scratch[2]);
         }
 
         messages.Add(args.ToArray());

@@ -133,6 +133,9 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     /// </summary>
     private const float AirDefenceShareOfForce = 0.3f;
 
+    /// <summary>Air-defence vehicles a commander owns before the share above takes over.</summary>
+    private const int StarterAirDefence = 2;
+
     /// <summary>Combat vehicles per munitions or fuel truck the commander keeps on the road.</summary>
     private const int VehiclesPerSupplyTruck = 16;
 
@@ -1313,8 +1316,9 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
 
         // And the umbrella has to keep pace with the army, not stop at the two launchers the opening
         // reviews bought: below its share of the force, one purchase a review is a launcher.
-        bool thinAirDefence = ownedCombat > 0
-            && CountOwnedAirDefence() < Mathf.CeilToInt(ownedCombat * AirDefenceShareOfForce);
+        // Never fewer than the starter launchers, bought from the first review next to the mine and the radar.
+        bool thinAirDefence = CountOwnedAirDefence()
+            < Mathf.Max(StarterAirDefence, Mathf.CeilToInt(ownedCombat * AirDefenceShareOfForce));
 
         // CHALLENGING: same pot, but it is all spent, and on what the opposition is weak to.
         counterBuying = IsChallenging(hq);

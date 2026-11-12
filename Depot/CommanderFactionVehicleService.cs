@@ -314,9 +314,13 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
             return false;
         }
 
+        // A side an AI commander plays (AI COMMANDERS: BOTH puts one on the player's own team) rolls
+        // out what it bought: held for a player, its army and air defence sat in the reserve all match.
+        bool aiCommanded = CommanderEnemyCommanderService.EffectiveMode != CommanderEnemyCommanderService.ModeOff
+            && CommanderUnitCap.IsAiSide(deploymentHq);
+
         // A type the player has queued is the queue's to roll out (see CommanderSpawnService.QueueReserve).
-        return IsFriendlyAiOff(deploymentHq)
-            || IsPlayedByPlayers(deploymentHq)
+        return (!aiCommanded && (IsFriendlyAiOff(deploymentHq) || IsPlayedByPlayers(deploymentHq)))
             || (ReferenceEquals(deploymentHq, CommanderGameAccess.GetLocalHq())
                 && CommanderSpawnService.Instance?.CountQueued(definition, unpaidOnly: true) > 0)
             || heldDefinitions.Contains(definition)
