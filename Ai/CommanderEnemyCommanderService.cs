@@ -735,7 +735,7 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     /// </summary>
     private static void RevealPlayerBase(FactionHQ hq, FactionHQ localHq)
     {
-        if (localHq.factionUnits == null)
+        if (localHq.factionUnits == null || HasHumanPlayers(hq) || (BothSides && !hq.preventJoin))
         {
             return;
         }
