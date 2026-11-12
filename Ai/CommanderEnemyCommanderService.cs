@@ -675,13 +675,8 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     /// nothing else. Deliberately small — the enemy still earns at the player's rates from here on,
     /// this only stops the first ten minutes being a walkover.
     /// <para>
-    /// <c>AIAircraftLimit</c> is pinned to zero on purpose. That field is the Basegame's free-air-
-    /// force tap: <c>FactionHQ.DeployAIAircraft</c> launches a random airframe out of the mission's
-    /// authored stock every few seconds until the cap is met, which is where the aircraft nobody
-    /// bought came from — and, on a map whose only airbases are highway strips, where the fighters
-    /// that immediately went looking for somewhere to land came from too. Every aircraft in the
-    /// duel is now one a commander paid for and launched: <see cref="BuyAirframe"/> for the enemy,
-    /// the AIR window for the player.
+    /// <c>AIAircraftLimit</c> is left as the lobby set it: <see cref="CommanderFreeAiPilots"/> flies
+    /// that many free AI pilots per side, outside stock and outside the commanders' wings.
     /// </para>
     /// </summary>
     private static void PrepareDuel(FactionHQ hq, FactionHQ localHq)
@@ -694,15 +689,11 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
             ?? (IsChampionsMission ? ChampionsHeadStart : IsChallenging(hq) ? DuelHeadStart : 1f);
         hq.SetFunds(hq.factionFunds * headStart);
 
-        hq.AIAircraftLimit = 0;
         hq.reserveAirframes = 0;
-
-        // The player's side too: the mod's own missions author 0, Carrier Duel authors 5.
-        localHq.AIAircraftLimit = 0;
 
         CommanderPlugin.Log.LogInfo(
             $"Enemy commander ({hq.faction.name}) takes the {(IsChampionsMission ? "Champions" : "duel")} head start (x{headStart:0.##}): {hq.factionFunds:0} funds. "
-                + "Automatic AI aircraft are off; every airframe is bought and launched.");
+                + $"Free AI pilots: {hq.AIAircraftLimit} enemy, {localHq.AIAircraftLimit} friendly (lobby setting).");
         OpenEveryBase();
     }
 

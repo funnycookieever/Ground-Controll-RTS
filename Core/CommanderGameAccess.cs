@@ -1113,8 +1113,12 @@ internal static class CommanderGameAccess
 
         if (!string.IsNullOrWhiteSpace(unit.unitName))
         {
-            // A human-flown aircraft keeps its plain name: call signs are for the AI's airframes.
-            bool callSign = unit is Ship || (unit is Aircraft aircraft && aircraft.Player == null);
+            // A human-flown aircraft keeps its plain name: call signs are for the AI's airframes. An
+            // AI player's name already is its call sign (CommanderFreeAiPilots).
+            bool callSign = unit is Ship
+                || (unit is Aircraft aircraft
+                    && aircraft.Player == null
+                    && !unit.unitName.StartsWith(CommanderFreeAiPilots.NameTag, System.StringComparison.Ordinal));
             string sign = callSign ? CommanderCallSigns.Get(unit) : string.Empty;
             return sign.Length > 0 ? $"{unit.unitName} {sign}" : unit.unitName;
         }

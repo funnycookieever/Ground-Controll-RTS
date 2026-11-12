@@ -567,7 +567,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
         foreach (PersistentID id in hq.factionUnits)
         {
-            if (id.TryGetUnit(out Unit unit) && unit is Aircraft aircraft && !unit.disabled)
+            if (id.TryGetUnit(out Unit unit) && unit is Aircraft aircraft && !unit.disabled && !CommanderFreeAiPilots.IsFree(aircraft))
             {
                 yield return aircraft;
             }
@@ -1139,6 +1139,7 @@ internal sealed partial class CommanderEnemyCommanderService
             if (id.TryGetUnit(out Unit unit)
                 && unit is Aircraft aircraft
                 && !unit.disabled
+                && !CommanderFreeAiPilots.IsFree(aircraft)
                 && !IsRadarPicket(aircraft.definition, hq)
                 && GetAirRole(aircraft) == role)
             {
@@ -2224,7 +2225,7 @@ internal sealed partial class CommanderEnemyCommanderService
         int count = 0;
         foreach (PersistentID id in hq.factionUnits)
         {
-            if (id.TryGetUnit(out Unit unit) && unit is Aircraft && !unit.disabled)
+            if (id.TryGetUnit(out Unit unit) && unit is Aircraft aircraft && !unit.disabled && !CommanderFreeAiPilots.IsFree(aircraft))
             {
                 count++;
             }
@@ -2289,7 +2290,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
     /// <summary>
     /// Buys one aircraft and launches it directly, instead of topping up stock and relying on
-    /// <c>FactionHQ.DeployAIAircraft</c> (off in the duel, see <c>PrepareDuel</c>), which picks a random
+    /// <c>FactionHQ.DeployAIAircraft</c> (free pilots only in the duel, see <c>CommanderFreeAiPilots</c>), which picks a random
     /// airframe and a random field. Here the field is chosen first and only aircraft it accepts are
     /// considered. Returns what it spent.
     /// </summary>
@@ -2546,8 +2547,9 @@ internal sealed partial class CommanderEnemyCommanderService
         foreach (PersistentID id in hq.factionUnits)
         {
             if (id.TryGetUnit(out Unit unit)
-                && unit is Aircraft
+                && unit is Aircraft airframe
                 && !unit.disabled
+                && !CommanderFreeAiPilots.IsFree(airframe)
                 && unit.definition is AircraftDefinition definition)
             {
                 airframesOwned.TryGetValue(definition, out int owned);
@@ -3141,7 +3143,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
         foreach (PersistentID id in hq.factionUnits)
         {
-            if (!id.TryGetUnit(out Unit unit) || unit is not Aircraft aircraft || unit.disabled)
+            if (!id.TryGetUnit(out Unit unit) || unit is not Aircraft aircraft || unit.disabled || CommanderFreeAiPilots.IsFree(aircraft))
             {
                 continue;
             }
