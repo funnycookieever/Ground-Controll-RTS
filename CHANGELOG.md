@@ -1,5 +1,11 @@
 ﻿# Changelog
 
+## Unreleased
+
+### Fixed
+
+- The depot faction vehicle limit now applies to factory products.
+
 ## 1.0.0.2
 
 ### Added

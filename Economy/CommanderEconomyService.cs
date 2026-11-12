@@ -1370,6 +1370,14 @@ internal sealed partial class CommanderEconomyService
             return false;
         }
 
+        if (kind == CommanderBuildKind.Factory
+            && production is VehicleDefinition vehicle
+            && !CommanderFactionVehicleService.CanPurchase(vehicle, hq))
+        {
+            StatusText = $"{CommanderGameAccess.GetVehicleLabel(vehicle)} is not available to this faction.";
+            return false;
+        }
+
         // A blueprint is not spawned until it is finished, so nothing downstream checks the site
         // before the money is taken; a guest's forwarded click has had no ghost to check it either.
         if (!preview.IsSiteAllowed(placed, position, hq, out string blocked, kind == CommanderBuildKind.NavalDock, rotation))
