@@ -176,7 +176,7 @@ internal static class CommanderAreaFire
     {
         for (int i = 0; i < selection.Count; i++)
         {
-            if (CanAreaFire(selection[i]) && CommanderGameAccess.IsFriendlyUnit(selection[i], CommanderGameAccess.GetLocalHq()))
+            if (CanPlayerAreaFire(selection[i]) && CommanderGameAccess.IsFriendlyUnit(selection[i], CommanderGameAccess.GetLocalHq()))
             {
                 return true;
             }
@@ -285,7 +285,7 @@ internal static class CommanderAreaFire
         List<string> args = new() { CommanderNetwork.Position(center), CommanderNetwork.Num(radius) };
         for (int i = 0; i < selection.Count; i++)
         {
-            if (CanAreaFire(selection[i]))
+            if (CanPlayerAreaFire(selection[i]))
             {
                 args.Add(CommanderNetwork.Id(selection[i]));
             }
@@ -293,7 +293,7 @@ internal static class CommanderAreaFire
 
         if (args.Count == 2)
         {
-            CommanderNotice.Fail("AREA FIRE: nothing selected carries unguided artillery or ballistic missiles.");
+            CommanderNotice.Fail("AREA FIRE: nothing selected carries unguided artillery.");
             return;
         }
 
@@ -332,6 +332,7 @@ internal static class CommanderAreaFire
         {
             if (CommanderNetwork.TryUnit(args[i], out Unit unit)
                 && ReferenceEquals(unit.NetworkHQ, hq)
+                && CanPlayerAreaFire(unit)
                 && Begin(unit, hq, area))
             {
                 given++;
@@ -342,6 +343,26 @@ internal static class CommanderAreaFire
         {
             CommanderNotice.Fail("AREA FIRE: the area is out of reach of every selected gun.");
         }
+    }
+
+    /// <summary>An attack order on ballistic launchers: they stop where they are, raise and fire at
+    /// the target instead of driving at it. Same host/guest split as <see cref="Place"/>.</summary>
+    internal static void PlaceTargeted(IReadOnlyList<Unit> launchers, Unit target)
+    {
+        List<string> args = new() { CommanderNetwork.Id(target) };
+        for (int i = 0; i < launchers.Count; i++)
+        {
+            args.Add(CommanderNetwork.Id(launchers[i]));
+        }
+
+        CommanderNetwork.Forward("areafire.target", args.ToArray());
+        BeginTargeted(CommanderGameAccess.GetLocalHq(), args.ToArray(), 0);
+    }
+
+    /// <summary>A guest's targeted launch, ownership-checked inside <see cref="Begin"/>.</summary>
+    internal static void HostTargetedFire(FactionHQ hq, string[] args)
+    {
+        BeginTargeted(hq, args, 1);
     }
 
     /// <summary>A guest's slider, ownership-checked.</summary>
@@ -417,7 +438,7 @@ internal static class CommanderAreaFire
             Unit unit = entry.Key;
 
             // A move, attack, guard or retreat order is "another order", and ends the shelling.
-            if (unit == null || unit.disabled || moves.HasOrder(unit))
+            if (unit == null || unit.disabled || moves.HasOrder(unit) || entry.Value.TargetLost)
             {
                 Stale.Add(unit!);
                 continue;
@@ -700,10 +721,40 @@ internal static class CommanderAreaFire
         return exception != null && SeekerTargetUnit(seeker) == null ? null : exception;
     }
 
-    private static bool Begin(Unit unit, FactionHQ? hq, MapArea area)
+    /// <summary>The AREA FIRE button's units: ballistic launchers take an attack order instead.</summary>
+    private static bool CanPlayerAreaFire(Unit? unit)
+    {
+        return CanAreaFire(unit) && !IsBallisticLauncher(unit);
+    }
+
+    private static void BeginTargeted(FactionHQ? hq, string[] args, int first)
+    {
+        if (hq == null || !CommanderNetwork.TryUnit(args[first], out Unit target) || target.disabled)
+        {
+            return;
+        }
+
+        GlobalPosition center = hq.TryGetKnownPosition(target, out GlobalPosition known) ? known : target.GlobalPosition();
+        MapArea area = new(center, MinDiameterMeters * 0.5f);
+        int given = 0;
+        for (int i = first + 1; i < args.Length; i++)
+        {
+            if (CommanderNetwork.TryUnit(args[i], out Unit unit) && IsBallisticLauncher(unit) && Begin(unit, hq, area, target))
+            {
+                given++;
+            }
+        }
+
+        if (given == 0)
+        {
+            CommanderNotice.Fail("LAUNCH: the target is out of reach of every selected launcher.");
+        }
+    }
+
+    private static bool Begin(Unit unit, FactionHQ? hq, MapArea area, Unit? target = null)
     {
         GlobalPosition center = area.Center;
-        if (!CanAreaFire(unit) || hq == null || !ReferenceEquals(unit.NetworkHQ, hq) || !InReachOfAnyStation(unit, center, area.Radius))
+        if (!CanAreaFire(unit) || hq == null || !ReferenceEquals(unit.NetworkHQ, hq) || !InReachOfAnyStation(unit, center, target != null ? 0f : area.Radius))
         {
             return false;
         }
@@ -714,7 +765,7 @@ internal static class CommanderAreaFire
         CommanderMoveService.Instance?.HoldForAreaFire(unit);
         Remove(unit);
         area.Units++;
-        Orders[unit] = new AreaOrder(area);
+        Orders[unit] = new AreaOrder(area, target, hq);
         CommanderPlugin.Log.LogInfo($"AREA FIRE: {CommanderGameAccess.GetUnitLabel(unit)} shelling {CommanderNetwork.Position(center)}.");
         return true;
     }
@@ -1025,11 +1076,21 @@ internal static class CommanderAreaFire
         private string lastReport = string.Empty;
         private float settingUpSince = -1f;
 
-        internal AreaOrder(MapArea area)
+        internal AreaOrder(MapArea area, Unit? target, FactionHQ hq)
         {
             Area = area;
+            Target = target;
+            Hq = hq;
+            AimPoint = area.Center;
             PickAimPoint();
         }
+
+        /// <summary>Set for a launcher's attack order: every round goes at this unit's last known spot.</summary>
+        internal Unit? Target { get; }
+
+        internal FactionHQ Hq { get; }
+
+        internal bool TargetLost => Target is not null && (Target == null || Target.disabled);
 
         internal MapArea Area { get; }
 
@@ -1069,6 +1130,16 @@ internal static class CommanderAreaFire
 
         internal void PickAimPoint()
         {
+            if (Target is not null)
+            {
+                if (Target != null && Hq.TryGetKnownPosition(Target, out GlobalPosition known))
+                {
+                    AimPoint = known;
+                }
+
+                return;
+            }
+
             Vector2 offset = UnityEngine.Random.insideUnitCircle * Area.Radius;
             AimPoint = Center + new Vector3(offset.x, 0f, offset.y);
         }

@@ -5,7 +5,7 @@
 ### Fixed
 
 - A damaged aircraft's COND now counts its wings, engines and every other part, not just the cockpit, so a badly hit aircraft no longer reads 100%.
-
+- Remove area fire fro balistic and nucelar balistic launchers
 ## 1.0.0.2
 
 ### Added
