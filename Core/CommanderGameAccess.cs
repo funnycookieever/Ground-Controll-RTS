@@ -892,9 +892,10 @@ internal static class CommanderGameAccess
     }
 
     /// <summary>
-    /// Condition 0-1, taken from the worst-off critical part on the unit. Parts start at 100 hit
-    /// points, and Basegame only disables a unit when a critical part reaches 0 — non-critical
-    /// parts (control surfaces, pylons, ship turrets) can be shot off and the unit carries on.
+    /// Condition 0-1: the worst critical part or the average of all parts, whichever is lower.
+    /// Parts start at 100 hit points, and Basegame only disables a unit when a critical part
+    /// reaches 0. Non-critical parts (wings, engines, pylons, ship turrets) can be shot off and the
+    /// unit carries on, so they lower the average rather than zeroing it.
     /// </summary>
     internal static float GetUnitCondition(Unit? unit)
     {
@@ -903,24 +904,34 @@ internal static class CommanderGameAccess
             return 0f;
         }
 
+        // Critical parts alone read 100% on an aircraft missing a wing: its only critical part is
+        // the cockpit. So the average over every part (shot off = 0) counts too.
         float worst = 1f;
+        float sum = 0f;
+        int count = 0;
         List<DamageablePart> parts = unit.damageables;
         for (int i = 0; i < parts.Count; i++)
         {
-            if (parts[i].Damageable is not UnitPart part || !UnitPartCriticalRef(part))
+            if (parts[i].Damageable is not UnitPart part)
             {
                 continue;
             }
 
-            if (parts[i].Removed)
+            float health = parts[i].Removed ? 0f : Mathf.Clamp01(part.hitPoints * 0.01f);
+            sum += health;
+            count++;
+            if (UnitPartCriticalRef(part))
             {
-                return 0f;
-            }
+                if (parts[i].Removed)
+                {
+                    return 0f;
+                }
 
-            worst = Mathf.Min(worst, Mathf.Clamp01(part.hitPoints * 0.01f));
+                worst = Mathf.Min(worst, health);
+            }
         }
 
-        return worst;
+        return count > 0 ? Mathf.Min(worst, sum / count) : worst;
     }
 
     /// <summary>Ammo 0-1 across every weapon station, or -1 when the unit carries no weapons.</summary>
