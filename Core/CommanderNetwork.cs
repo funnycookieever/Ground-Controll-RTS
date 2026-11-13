@@ -491,6 +491,25 @@ internal sealed class CommanderNetwork : ICommanderTickPersistent
         }
     }
 
+    /// <summary>Sends a sync message to every modded guest, including observers on other factions.</summary>
+    internal static void SendToGuests(string[] message)
+    {
+        NetworkServer? server = NetworkManagerNuclearOption.i?.Server;
+        if (server == null || !server.Active)
+        {
+            return;
+        }
+
+        string text = string.Join(SeparatorText, message);
+        foreach (INetworkPlayer player in server.AuthenticatedPlayers)
+        {
+            if (!player.IsHost && ModdedGuests.Contains(player))
+            {
+                SendTo(player, text);
+            }
+        }
+    }
+
     /// <summary>Answers the guest whose request the host is carrying out. Does nothing otherwise.</summary>
     internal static void Reply(string verb, params string[] args)
     {

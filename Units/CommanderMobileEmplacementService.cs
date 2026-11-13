@@ -40,12 +40,12 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
     private static readonly FieldInfo? DeployablePartsField = AccessTools.Field(typeof(GroundVehicle), "deployableParts");
     private static readonly FieldInfo? WheelsField = AccessTools.Field(typeof(GroundVehicle), "wheels");
-    private static readonly MethodInfo? DeployPartsMethod = AccessTools.Method(typeof(GroundVehicle), "DeployParts");
     private static readonly FieldInfo? ElevationField = AccessTools.Field(typeof(Turret), "elevationAngle");
     private static readonly FieldInfo? ElevationPivotField = AccessTools.Field(typeof(Turret), "elevationTransform");
+    private static readonly FieldInfo? TraverseField = AccessTools.Field(typeof(Turret), "traverseAngle");
 
     // Target elevations of launcher lifts still in progress, so a re-hitch mid-lift captures the target, not the half-raised pose.
-    private static readonly Dictionary<Turret, (float Angle, Quaternion PivotRotation)> PendingLift = new();
+    private static readonly Dictionary<Turret, TowJob> PendingLift = new();
 
     private readonly CommanderSelectionService selectionService;
     private readonly List<TowJob> jobs = new();
@@ -65,6 +65,17 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         Instance = this;
         CommanderNetwork.OnHost("emplace", HostHitch);
         CommanderNetwork.OnHost("tow-drop", HostDrop);
+        CommanderNetwork.OnGuest("tow.state", ApplyTowState);
+        CommanderNetwork.OnSync((_, messages) =>
+        {
+            foreach (TowJob job in jobs)
+            {
+                if (job.Trailer != null && !job.Trailer.disabled)
+                {
+                    messages.Add(TowState(job));
+                }
+            }
+        });
     }
 
     private enum TowStage
@@ -85,7 +96,13 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
     public void ResetSession()
     {
+        foreach (TowJob job in jobs)
+        {
+            job.Stage = TowStage.ApproachingPickup;
+        }
+
         jobs.Clear();
+        PendingLift.Clear();
         statusText = string.Empty;
         availabilityTrailer = null;
         cachedHaulerAvailable = false;
@@ -101,7 +118,9 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
         for (int i = jobs.Count - 1; i >= 0; i--)
         {
-            if (UpdateJob(jobs[i]))
+            if (CommanderNetwork.IsGuest
+                ? jobs[i].Trailer == null || jobs[i].Trailer.disabled
+                : UpdateJob(jobs[i]))
             {
                 jobs.RemoveAt(i);
             }
@@ -130,6 +149,17 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     internal static bool IsTowingHauler(Unit? unit)
     {
         return Instance?.FindJob(unit) is { Stage: TowStage.Towing } job && ReferenceEquals(job.Tractor, unit);
+    }
+
+    internal static bool IsTowedTrailer(Unit? unit)
+    {
+        return Instance?.FindJob(unit) is { Stage: TowStage.Hitching or TowStage.Towing } job
+            && ReferenceEquals(job.Trailer, unit);
+    }
+
+    internal static bool IsLiftingLauncher(Turret turret)
+    {
+        return PendingLift.ContainsKey(turret);
     }
 
     internal static bool ShouldBlockDestination(UnitCommand command)
@@ -285,7 +315,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         }
 
         // Only the BDF StratoLance needs its launcher elevation preserved for now but can be expanded later if needed.
-        if (trailer.definition?.jsonKey is "SAMTrailer1")
+        if (trailer.definition?.jsonKey is "SAMTrailer1" && job.LauncherElevations.Count == 0)
         {
             CaptureLauncherElevation(job);
         }
@@ -300,8 +330,15 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         // the deployed parts away.
         trailer.NetworknetworkStationary = false;
 
-        // The setter only folds the parts when the flag actually changes; fold them regardless.
-        DeployPartsMethod?.Invoke(trailer, new object[] { false });
+        // SyncVar hooks run locally only in host mode, and only when the value changes.
+        trailer.OnStationaryChanged(false);
+
+        if (CommanderNetwork.IsGuest)
+        {
+            // Guests consume the game's transform snapshots; only the server runs Tow's physics.
+            return;
+        }
+
         trailer.enabled = false;
         if (trailer.rb != null)
         {
@@ -365,12 +402,32 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             trailer.StowTurrets(false);
         }
 
-        CommanderGameAccess.TeleportGroundVehicle(trailer, position);
+        if (!CommanderNetwork.IsGuest)
+        {
+            CommanderGameAccess.TeleportGroundVehicle(trailer, position);
+        }
+
         CommanderGameAccess.SetUnitHoldPosition(trailer, hold: true);
 
         // Keep the existing deployment behavior for every trailer.
         trailer.NetworknetworkStationary = true;
-        SetPartsStayDeployed(trailer, job.StaysDeployed);
+        if (!trailer.IsHost)
+        {
+            trailer.OnStationaryChanged(true);
+        }
+
+        if (job.StaysDeployed.Length > 0)
+        {
+            SetPartsStayDeployed(trailer, job.StaysDeployed);
+        }
+
+        if (!CommanderNetwork.IsGuest)
+        {
+            // A late join must spawn at the drop, rather than back at the depot.
+            trailer.NetworkstartPosition = trailer.GlobalPosition();
+            trailer.NetworkstartRotation = trailer.transform.rotation;
+            CommanderNetwork.SendToGuests(TowState(job, dropped: true));
+        }
 
         if (restoreLauncher)
         {
@@ -431,14 +488,15 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
             foreach (Turret turret in station.Turrets)
             {
-                if (turret != null && PendingLift.TryGetValue(turret, out (float Angle, Quaternion PivotRotation) pending))
+                if (turret != null && PendingLift.TryGetValue(turret, out TowJob pending))
                 {
-                    job.LauncherElevations[turret] = pending;
+                    job.LauncherElevations[turret] = pending.LauncherElevations[turret];
                 }
                 else if (turret != null && ElevationField.GetValue(turret) is float angle
                     && ElevationPivotField?.GetValue(turret) is Transform pivot)
                 {
-                    job.LauncherElevations[turret] = (angle, pivot.localRotation);
+                    float traverse = TraverseField?.GetValue(turret) is float current ? current : 0f;
+                    job.LauncherElevations[turret] = (angle, pivot.localRotation, traverse);
                 }
             }
         }
@@ -446,7 +504,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
     private static void RestoreLauncherElevation(TowJob job)
     {
-        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation, float Traverse)> entry in job.LauncherElevations)
         {
             if (entry.Key == null)
             {
@@ -454,6 +512,8 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             }
 
             ElevationField?.SetValue(entry.Key, entry.Value.Angle);
+            TraverseField?.SetValue(entry.Key, entry.Value.Traverse);
+            entry.Key.transform.localRotation = Quaternion.Euler(0f, entry.Value.Traverse, 0f);
             if (ElevationPivotField?.GetValue(entry.Key) is Transform pivot)
             {
                 pivot.localRotation = entry.Value.PivotRotation;
@@ -464,9 +524,9 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
     private static System.Collections.IEnumerator FinishUnstow(TowJob job)
     {
         // Runs synchronously inside StartCoroutine, so the targets are registered before any re-hitch can happen.
-        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation, float Traverse)> entry in job.LauncherElevations)
         {
-            PendingLift[entry.Key] = entry.Value;
+            PendingLift[entry.Key] = job;
         }
 
         try
@@ -477,7 +537,10 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         {
             foreach (Turret turret in job.LauncherElevations.Keys)
             {
-                PendingLift.Remove(turret);
+                if (PendingLift.TryGetValue(turret, out TowJob pending) && ReferenceEquals(pending, job))
+                {
+                    PendingLift.Remove(turret);
+                }
             }
         }
     }
@@ -488,14 +551,14 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         yield return new WaitForFixedUpdate();
 
         if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
-            || Instance?.FindJob(trailer) != null)
+            || IsTowedTrailer(trailer))
         {
             yield break;
         }
 
         // Retain the folded pose so unstowing does not visibly snap the launcher upright.
         Dictionary<Turret, (float Angle, Quaternion Rotation)> folded = new();
-        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
+        foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation, float Traverse)> entry in job.LauncherElevations)
         {
             Turret turret = entry.Key;
             if (turret == null || ElevationPivotField?.GetValue(turret) is not Transform pivot)
@@ -530,14 +593,22 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         while (Time.time < liftDeadline)
         {
             if (trailer == null || trailer.disabled || !trailer.NetworknetworkStationary
-                || Instance?.FindJob(trailer) != null)
+                || IsTowedTrailer(trailer))
             {
                 yield break;
             }
 
+            // Let the game's deployment sequence finish before restoring the launcher pose.
+            if (CommanderFireNow.ArePartsDeploying(trailer))
+            {
+                liftDeadline = Time.time + 15f;
+                yield return new WaitForFixedUpdate();
+                continue;
+            }
+
             bool finished = true;
             float step = liftSpeed * Time.fixedDeltaTime;
-            foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation)> entry in job.LauncherElevations)
+            foreach (KeyValuePair<Turret, (float Angle, Quaternion PivotRotation, float Traverse)> entry in job.LauncherElevations)
             {
                 Turret turret = entry.Key;
                 if (turret == null || ElevationPivotField?.GetValue(turret) is not Transform pivot)
@@ -547,6 +618,17 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
                 pivot.localRotation = Quaternion.RotateTowards(
                     pivot.localRotation, entry.Value.PivotRotation, step);
+                if (TraverseField?.GetValue(turret) is float traverse)
+                {
+                    float next = Mathf.MoveTowardsAngle(traverse, entry.Value.Traverse, step);
+                    TraverseField.SetValue(turret, next);
+                    turret.transform.localRotation = Quaternion.Euler(0f, next, 0f);
+                    if (Mathf.Abs(Mathf.DeltaAngle(next, entry.Value.Traverse)) > 0.1f)
+                    {
+                        finished = false;
+                    }
+                }
+
                 if (ElevationField?.GetValue(turret) is float current)
                 {
                     float next = Mathf.MoveTowardsAngle(current, entry.Value.Angle, step);
@@ -573,10 +655,48 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
         // Restore the exact saved angle after the animation.
         if (trailer != null && !trailer.disabled && trailer.NetworknetworkStationary
-            && Instance?.FindJob(trailer) == null)
+            && !IsTowedTrailer(trailer))
         {
             RestoreLauncherElevation(job);
         }
+    }
+
+    /// <summary>Physics stays on the server; guests need the job and saved pose for UI and deployment.</summary>
+    private static string[] TowState(TowJob job, bool dropped = false)
+    {
+        // Header: trailer, hauler, stage (-1 is dropped), position, Euler rotation.
+        // Each saved launcher: station, turret, elevation, traverse, pivot Euler rotation.
+        GroundVehicle trailer = job.Trailer;
+        Vector3 rotation = trailer.transform.eulerAngles;
+        List<string> args = new()
+        {
+            "tow.state", CommanderNetwork.Id(trailer), CommanderNetwork.Id(job.Tractor),
+            CommanderNetwork.Num(dropped ? -1 : (int)job.Stage), CommanderNetwork.Position(trailer.GlobalPosition()),
+            CommanderNetwork.Num(rotation.x), CommanderNetwork.Num(rotation.y), CommanderNetwork.Num(rotation.z),
+        };
+        for (int s = 0; s < trailer.weaponStations.Count; s++)
+        {
+            List<Turret> turrets = trailer.weaponStations[s].Turrets;
+            for (int t = 0; t < turrets.Count; t++)
+            {
+                Turret turret = turrets[t];
+                if (turret == null || !job.LauncherElevations.TryGetValue(turret, out (float Angle, Quaternion PivotRotation, float Traverse) pose))
+                {
+                    continue;
+                }
+
+                Vector3 pivot = pose.PivotRotation.eulerAngles;
+                args.Add(CommanderNetwork.Num(s));
+                args.Add(CommanderNetwork.Num(t));
+                args.Add(CommanderNetwork.Num(pose.Angle));
+                args.Add(CommanderNetwork.Num(pose.Traverse));
+                args.Add(CommanderNetwork.Num(pivot.x));
+                args.Add(CommanderNetwork.Num(pivot.y));
+                args.Add(CommanderNetwork.Num(pivot.z));
+            }
+        }
+
+        return args.ToArray();
     }
 
     private static float HalfLength(Unit unit)
@@ -611,6 +731,10 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
             if (!trailerLost && job.Stage != TowStage.ApproachingPickup)
             {
                 EndTow(job, job.Trailer!.GlobalPosition());
+            }
+            else if (!trailerLost)
+            {
+                CommanderNetwork.SendToGuests(TowState(job, dropped: true));
             }
 
             SetStatus("Hauler lost.");
@@ -658,6 +782,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
                     IssueHaulerDestination(job.Tractor, job.Tractor.GlobalPosition());
                     BeginTow(job);
                     job.StageCompleteAt = Time.unscaledTime + job.HitchSeconds;
+                    CommanderNetwork.SendToGuests(TowState(job));
                     SetStatus($"Hitching trailer ({job.HitchSeconds:0} seconds).");
                 }
 
@@ -670,6 +795,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
                 }
 
                 job.Stage = TowStage.Towing;
+                CommanderNetwork.SendToGuests(TowState(job));
                 CommanderPlugin.Log.LogInfo($"Hitch: {CommanderGameAccess.GetUnitLabel(job.Trailer)} hitched.");
                 CommanderGameAccess.SetUnitHoldPosition(job.Tractor, hold: false);
                 SetStatus("Trailer hitched. Move the hauler, then DROP TRAILER.");
@@ -685,10 +811,90 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
         jobs.Add(job);
         CommanderGameAccess.SetUnitHoldPosition(tractor, hold: true);
         IssueHaulerDestination(tractor, job.PickupStagingPoint);
+        CommanderNetwork.SendToGuests(TowState(job));
         CommanderPlugin.Log.LogInfo(
             $"Hitch: {CommanderGameAccess.GetUnitLabel(tractor)} sent to {CommanderGameAccess.GetUnitLabel(trailer)}, "
             + $"{CommanderGameAccess.HorizontalDistance(tractor.transform.position, trailer.transform.position):0} m away.");
         SetStatus($"{CommanderGameAccess.GetUnitLabel(tractor)} dispatched to hitch the trailer.");
+    }
+
+    private void ApplyTowState(string[] args)
+    {
+        if (!CommanderNetwork.IsGuest || args.Length < 8
+            || !CommanderNetwork.TryUnit(args, 1, out Unit unit) || unit is not GroundVehicle trailer)
+        {
+            return;
+        }
+
+        int stage = CommanderNetwork.Int(args, 3);
+        if (stage < -1 || stage > (int)TowStage.Towing)
+        {
+            return;
+        }
+
+        TowJob? job = FindJob(trailer);
+        if (job == null && CommanderNetwork.TryUnit(args, 2, out Unit hauler) && hauler is GroundVehicle tractor)
+        {
+            job = new TowJob(trailer, tractor);
+            jobs.Add(job);
+        }
+
+        if (job != null)
+        {
+            for (int i = 8; i + 6 < args.Length; i += 7)
+            {
+                int station = CommanderNetwork.Int(args, i);
+                int turret = CommanderNetwork.Int(args, i + 1);
+                if (station < 0 || station >= trailer.weaponStations.Count
+                    || turret < 0 || turret >= trailer.weaponStations[station].Turrets.Count)
+                {
+                    continue;
+                }
+
+                Turret target = trailer.weaponStations[station].Turrets[turret];
+                if (target != null)
+                {
+                    job.LauncherElevations[target] = (
+                        CommanderNetwork.Float(args, i + 2),
+                        Quaternion.Euler(CommanderNetwork.Float(args, i + 4), CommanderNetwork.Float(args, i + 5), CommanderNetwork.Float(args, i + 6)),
+                        CommanderNetwork.Float(args, i + 3));
+                }
+            }
+        }
+
+        if (stage < 0 && CommanderNetwork.TryPosition(args, 4, out GlobalPosition position))
+        {
+            Quaternion rotation = Quaternion.Euler(CommanderNetwork.Float(args, 5), CommanderNetwork.Float(args, 6), CommanderNetwork.Float(args, 7));
+            trailer.transform.SetPositionAndRotation(position.ToLocalPosition(), rotation);
+            trailer.rb.position = position.ToLocalPosition();
+            trailer.rb.rotation = rotation;
+            trailer.rb.velocity = Vector3.zero;
+            trailer.rb.angularVelocity = Vector3.zero;
+            if (job != null)
+            {
+                EndTow(job, position);
+                jobs.Remove(job);
+            }
+            else
+            {
+                trailer.NetworknetworkStationary = true;
+                trailer.OnStationaryChanged(true);
+            }
+
+            return;
+        }
+
+        if (job == null || stage < 0)
+        {
+            return;
+        }
+
+        bool begin = job.Stage == TowStage.ApproachingPickup && stage != (int)TowStage.ApproachingPickup;
+        job.Stage = (TowStage)stage;
+        if (begin)
+        {
+            BeginTow(job);
+        }
     }
 
     /// <summary>A guest's hitch request: the host picks the tractor, as the guest's own window did.</summary>
@@ -818,7 +1024,7 @@ internal sealed class CommanderMobileEmplacementService : ICommanderActivate, IC
 
         internal bool[] StaysDeployed { get; set; } = Array.Empty<bool>();
 
-        internal Dictionary<Turret, (float Angle, Quaternion PivotRotation)> LauncherElevations { get; } = new();
+        internal Dictionary<Turret, (float Angle, Quaternion PivotRotation, float Traverse)> LauncherElevations { get; } = new();
 
         /// <summary>The pickup spot: <see cref="StagingDistance"/> out from the trailer on the tractor's side.</summary>
         internal void AimPickup()
