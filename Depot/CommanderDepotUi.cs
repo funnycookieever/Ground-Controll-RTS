@@ -6,14 +6,17 @@ namespace GroundControlRts;
 
 internal sealed class CommanderDepotUi
 {
+    /// <summary>Teammates' queues the window has room for, one line each.</summary>
+    internal const int MaxTeamLines = 4;
+    internal const float TeamLineHeight = 18f;
+
     private const int WindowId = 0x434F4D44;
 
     /// <summary>Wide enough for "SPAWN RESERVE (00)" on one line; at 120 it wrapped and was clipped.</summary>
     private const float QueueButtonWidth = 170f;
 
-    /// <summary>Teammates' queues the window has room for, one line each.</summary>
-    private const int MaxTeamLines = 4;
-    private const float TeamLineHeight = 18f;
+    /// <summary>Network lag on a teammate's clock: two done times this close are the same build.</summary>
+    private const float WaitingSlackSeconds = 1f;
 
     private const int DetailSlot = 2;
     private const int QueueSlot = 3;
@@ -52,7 +55,7 @@ internal sealed class CommanderDepotUi
     /// seconds, negative for any other tile; the naval dock's queue draws with this too.
     /// <paramref name="clicked"/> is true when the player clicked the tile to cancel one. A tile with
     /// an <paramref name="owner"/> is a teammate's, drawn dimmed, and cannot be cancelled from here.</summary>
-    internal static bool DrawQueueTile(ref float x, float y, float width, float height, float limit, UnitDefinition definition, int count, out bool clicked, float buildLeft = -1f, float buildSeconds = 0f, string? owner = null)
+    internal static bool DrawQueueTile(ref float x, float y, float width, float height, float limit, UnitDefinition definition, int count, out bool clicked, float buildLeft = -1f, float buildSeconds = 0f, string? owner = null, bool waiting = false)
     {
         clicked = false;
         if (x + width > limit)
@@ -75,7 +78,11 @@ internal sealed class CommanderDepotUi
             GUI.Label(new Rect(tile.x, tile.yMax - 17f, tile.width - 4f, 16f), $"x{count}", RightCaption);
         }
 
-        if (buildLeft >= 0f)
+        if (waiting)
+        {
+            GUI.Label(new Rect(tile.x + 4f, tile.y + 1f, tile.width - 8f, 16f), "WAITING", CommanderUiTheme.Caption);
+        }
+        else if (buildLeft >= 0f)
         {
             GUI.Label(new Rect(tile.x + 4f, tile.y + 1f, tile.width - 8f, 16f), CommanderBuildTimes.Format(buildLeft), CommanderUiTheme.Caption);
             float done = buildSeconds > 0f ? 1f - Mathf.Clamp01(buildLeft / buildSeconds) : 1f;
@@ -88,6 +95,18 @@ internal sealed class CommanderDepotUi
         clicked = pressed && owner == null;
         x += width + 4f;
         return true;
+    }
+
+    /// <summary>What teammates have queued: theirs to cancel, so this only reads.</summary>
+    internal static void DrawTeamQueues(Rect rect, List<string> lines, int rows)
+    {
+        GUI.Box(rect, string.Empty, CommanderUiTheme.Inset);
+        int hidden = lines.Count - rows;
+        GUI.Label(new Rect(rect.x + 10f, rect.y + 2f, rect.width - 20f, 18f), hidden > 0 ? $"TEAM QUEUES  (+{hidden} MORE)" : "TEAM QUEUES", CommanderUiTheme.Caption);
+        for (int i = 0; i < rows; i++)
+        {
+            CommanderUiTheme.FitLabel(new Rect(rect.x + 10f, rect.y + 20f + (i * TeamLineHeight), rect.width - 20f, TeamLineHeight), lines[i], CommanderUiTheme.MutedLabel);
+        }
     }
 
     internal void ResetPosition()
@@ -177,18 +196,6 @@ internal sealed class CommanderDepotUi
         return y + 20f;
     }
 
-    /// <summary>What teammates have queued: theirs to cancel, so this only reads.</summary>
-    private static void DrawTeamQueues(Rect rect, List<string> lines, int rows)
-    {
-        GUI.Box(rect, string.Empty, CommanderUiTheme.Inset);
-        int hidden = lines.Count - rows;
-        GUI.Label(new Rect(rect.x + 10f, rect.y + 2f, rect.width - 20f, 18f), hidden > 0 ? $"TEAM QUEUES  (+{hidden} MORE)" : "TEAM QUEUES", CommanderUiTheme.Caption);
-        for (int i = 0; i < rows; i++)
-        {
-            CommanderUiTheme.FitLabel(new Rect(rect.x + 10f, rect.y + 20f + (i * TeamLineHeight), rect.width - 20f, TeamLineHeight), lines[i], CommanderUiTheme.MutedLabel);
-        }
-    }
-
     private void DrawWindow(int windowId)
     {
         float y = 36f;
@@ -196,7 +203,7 @@ internal sealed class CommanderDepotUi
         {
             string help = CommanderDraftService.IsDraftMission
                 ? "DRAFT: nothing is for sale. The cards are what is left of the army you drafted; the battle queued all of it across your depots when it started. Click a vehicle to roll another one out of this depot. CLEAR keeps the queued units in reserve instead, to send out later. New units wait beside the depot until ordered, or go to the rally point you set."
-                : $"Click a vehicle to queue it at this depot; the queue at the bottom shows what is waiting. Each unit takes a build time, longer for better units (up to 3 minutes), counted down on the first picture. Each unit costs its price and also draws the fuel and ammo shown beside its picture from the depots within {CommanderSettings.SupplyStoreRangeKm:0} km, so buy supply first. New units wait beside the depot until ordered, or go to the rally point you set: SET RALLY, or right-click with the depot selected. A dimmed card needs this depot upgraded to that level first: select the depot and press UPGRADE DEPOT. REINFORCE puts every unit this depot builds straight into that control group. CLEAR empties the queue, which is the way out of a queue whose head is waiting on funds or on enriched uranium.";
+                : $"Click a vehicle to queue it at this depot (Shift+click queues 5); the queue at the bottom shows what is waiting. Each unit takes a build time, longer for better units (up to 3 minutes), counted down on the first picture. Each unit costs its price and also draws the fuel and ammo shown beside its picture from the depots within {CommanderSettings.SupplyStoreRangeKm:0} km, so buy supply first. New units wait beside the depot until ordered, or go to the rally point you set: SET RALLY, or right-click with the depot selected. A dimmed card needs this depot upgraded to that level first: select the depot and press UPGRADE DEPOT. REINFORCE puts every unit this depot builds straight into that control group. CLEAR empties the queue, which is the way out of a queue whose head is waiting on funds or on enriched uranium.";
             y = 36f + CommanderUiTheme.DrawHelpOverlay(new Rect(12f, 36f, windowRect.width - 24f, 92f), help) + 10f;
         }
 
@@ -358,7 +365,10 @@ internal sealed class CommanderDepotUi
                 CommanderBuildTimes.Format(CommanderFactionVehicleService.GetReserveCount(vehicle) > 0 ? 0f : CommanderBuildTimes.For(vehicle))))
             {
                 detailDefinition = vehicles[i];
-                spawnService.QueueVehicle(vehicles[i]);
+                for (int n = Event.current.shift ? 5 : 1; n > 0; n--)
+                {
+                    spawnService.QueueVehicle(vehicles[i]);
+                }
             }
         }
 
@@ -466,7 +476,19 @@ internal sealed class CommanderDepotUi
         float tileHeight = rect.height - 24f;
         float tileWidth = tileHeight * 1.4f;
         float limit = rect.xMax - QueueButtonWidth - 16f;
-        if (queue != null && !DrawOwnQueue(queue, ref x, tileY, tileWidth, tileHeight, limit))
+
+        // The depot builds one unit at a time for the whole team: bookings behind the first are
+        // already pushed back, so only the one done soonest is building; the rest show WAITING.
+        float activeDoneAt = queue != null && queue.BuildDoneAt > 0f ? queue.BuildDoneAt : float.MaxValue;
+        for (int i = 0; teamRuns != null && i < teamRuns.Count; i++)
+        {
+            if (ReferenceEquals(teamRuns[i].Depot, spawnService.SelectedDepot) && teamRuns[i].BuildDoneAt >= 0f)
+            {
+                activeDoneAt = Mathf.Min(activeDoneAt, teamRuns[i].BuildDoneAt);
+            }
+        }
+
+        if (queue != null && !DrawOwnQueue(queue, ref x, tileY, tileWidth, tileHeight, limit, activeDoneAt))
         {
             return;
         }
@@ -477,7 +499,8 @@ internal sealed class CommanderDepotUi
             if (ReferenceEquals(run.Depot, spawnService.SelectedDepot))
             {
                 float teamLeft = run.BuildDoneAt >= 0f ? Mathf.Max(0f, run.BuildDoneAt - Time.time) : -1f;
-                if (!DrawQueueTile(ref x, tileY, tileWidth, tileHeight, limit, run.Definition, run.Count, out _, teamLeft, 0f, run.Owner))
+                bool waiting = run.BuildDoneAt >= 0f && run.BuildDoneAt > activeDoneAt + WaitingSlackSeconds;
+                if (!DrawQueueTile(ref x, tileY, tileWidth, tileHeight, limit, run.Definition, run.Count, out _, teamLeft, 0f, run.Owner, waiting))
                 {
                     return;
                 }
@@ -486,13 +509,14 @@ internal sealed class CommanderDepotUi
     }
 
     /// <summary>False when the row is full or a click just changed the queue.</summary>
-    private bool DrawOwnQueue(CommanderSpawnService.DepotSpawnQueue queue, ref float x, float tileY, float tileWidth, float tileHeight, float limit)
+    private bool DrawOwnQueue(CommanderSpawnService.DepotSpawnQueue queue, ref float x, float tileY, float tileWidth, float tileHeight, float limit, float activeDoneAt)
     {
         int runStart = 0;
 
         // The countdown rides on the first picture, the unit being built. A click on a run cancels its
         // last unit, so the one being built keeps its clock unless it is the only one in the run.
         float buildLeft = queue.BuildDoneAt > 0f ? queue.BuildDoneAt - Time.time : -1f;
+        bool waiting = buildLeft >= 0f && (queue.BuildDoneAt > activeDoneAt + WaitingSlackSeconds || buildLeft > queue.BuildSeconds + WaitingSlackSeconds);
         List<VehicleDefinition> pending = queue.PendingDefinitions;
         for (int i = 1; i <= pending.Count; i++)
         {
@@ -501,7 +525,7 @@ internal sealed class CommanderDepotUi
                 continue;
             }
 
-            bool fits = DrawQueueTile(ref x, tileY, tileWidth, tileHeight, limit, pending[runStart], i - runStart, out bool clicked, buildLeft, queue.BuildSeconds);
+            bool fits = DrawQueueTile(ref x, tileY, tileWidth, tileHeight, limit, pending[runStart], i - runStart, out bool clicked, buildLeft, queue.BuildSeconds, null, waiting);
             if (clicked)
             {
                 spawnService.CancelQueued(i - 1);
@@ -514,6 +538,7 @@ internal sealed class CommanderDepotUi
             }
 
             buildLeft = -1f;
+            waiting = false;
             runStart = i;
         }
 

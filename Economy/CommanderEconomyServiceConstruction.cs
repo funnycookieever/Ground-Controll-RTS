@@ -305,6 +305,12 @@ internal sealed partial class CommanderEconomyService
             moves?.ClearOrder(units[i]);
             queuedBuildOrders.Remove(units[i]);
             request[i + 1] = CommanderNetwork.Id(units[i]);
+
+            // The host sets the destination, so the guest's ServerSetDestination hook never sees it.
+            if (CommanderNetwork.IsGuest)
+            {
+                moves?.ShowPlayerDestination(units[i], PickBuilderSlot(site, units[i]));
+            }
         }
 
         if (!CommanderNetwork.IsHandlingGuest)
@@ -503,7 +509,8 @@ internal sealed partial class CommanderEconomyService
             site.Site.z + (Mathf.Sin(angle) * site.RingRadius)));
     }
 
-    private static void SendBuilder(ConstructionSite site, Unit builder)
+    /// <summary>The ring slot <paramref name="builder"/> is sent to; a guest picks it too, for its MOVE marker.</summary>
+    private static GlobalPosition PickBuilderSlot(ConstructionSite site, Unit builder)
     {
         // The first slot faces the builder: a blueprint has no collider, so the pathfinder drives
         // straight across it to a slot on the far side, and the building then rises round the truck.
@@ -518,6 +525,14 @@ internal sealed partial class CommanderEconomyService
         {
             post = GetRingSlot(site, angle + (step * Mathf.PI / 6f));
         }
+
+        return post;
+    }
+
+    private static void SendBuilder(ConstructionSite site, Unit builder)
+    {
+        Vector3 from = builder.GlobalPosition() - site.Site;
+        GlobalPosition post = PickBuilderSlot(site, builder);
 
         // A stopped vehicle is held in place whatever it is told next.
         CommanderGameAccess.SetUnitHoldPosition(builder, false);

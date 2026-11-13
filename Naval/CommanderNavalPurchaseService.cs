@@ -473,6 +473,46 @@ internal sealed class CommanderNavalPurchaseService : ICommanderActivate, IComma
         return cost;
     }
 
+    /// <summary>This player's dock queues for the team list, in the shape of
+    /// <see cref="CommanderSpawnService.CollectOwnQueues"/>: dock id, seconds left, <c>key:count</c> runs.</summary>
+    internal void CollectOwnQueues(List<string> args, int maxQueues, int maxRuns)
+    {
+        int queues = 0;
+        for (int q = 0; q < dockQueues.Count && queues < maxQueues; q++)
+        {
+            DockQueue queue = dockQueues[q];
+
+            // ponytail: a queue with no dock clicked has no id to show it under; skipped until that matters.
+            if (queue.Ships.Count == 0 || queue.Dock == null)
+            {
+                continue;
+            }
+
+            queues++;
+            System.Text.StringBuilder runs = new();
+            int runCount = 0;
+            int runStart = 0;
+            for (int i = 1; i <= queue.Ships.Count && runCount < maxRuns; i++)
+            {
+                if (i < queue.Ships.Count && queue.Ships[i] == queue.Ships[runStart])
+                {
+                    continue;
+                }
+
+                runs.Append(runCount++ > 0 ? "," : string.Empty)
+                    .Append(queue.Ships[runStart].jsonKey)
+                    .Append(':')
+                    .Append(CommanderNetwork.Num(i - runStart));
+                runStart = i;
+            }
+
+            bool ticking = queue.DoneAt > 0f && !queue.Blocked && queue.Held == null;
+            args.Add(CommanderNetwork.Id(queue.Dock));
+            args.Add(CommanderNetwork.Num(ticking ? Mathf.Max(0f, queue.DoneAt - Time.time) : -1f));
+            args.Add(runs.ToString());
+        }
+    }
+
     private static void Refund(FactionHQ? hq, float amount)
     {
         if (hq != null && amount > 0f && !CommanderQueuePayment.Return(amount))

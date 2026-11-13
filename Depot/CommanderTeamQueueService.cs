@@ -51,7 +51,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
 
     internal static CommanderTeamQueueService? Instance { get; private set; }
 
-    /// <summary>One line per teammate's queue, for the depot window.</summary>
+    /// <summary>One line per teammate's queue, depot or dock, for the depot and naval windows.</summary>
     internal List<string> Lines { get; } = new();
 
     /// <summary>Teammates' queued units as pictures, for the depot window's QUEUE row.</summary>
@@ -112,14 +112,14 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         return left < 0f ? left : Mathf.Max(0f, left - elapsed);
     }
 
-    private string DescribeRuns(Entry entry, VehicleDepot? depot)
+    private string DescribeRuns(Entry entry, Unit? depot)
     {
         StringBuilder text = new();
         string[] parts = entry.Runs.Split(',');
         for (int i = 0; i < parts.Length; i++)
         {
             string[] run = parts[i].Split(':');
-            VehicleDefinition? definition = CommanderNetwork.Definition<VehicleDefinition>(CommanderNetwork.Arg(run, 0));
+            UnitDefinition? definition = CommanderNetwork.Definition<UnitDefinition>(CommanderNetwork.Arg(run, 0));
             if (definition == null)
             {
                 continue;
@@ -140,10 +140,17 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         return text.ToString();
     }
 
+    /// <summary>This player's depot queues, then its naval dock queues, under one cap.</summary>
+    private void CollectOwnQueues(List<string> args)
+    {
+        spawnService.CollectOwnQueues(args, MaxQueuesPerPlayer, MaxRunsPerQueue);
+        CommanderNavalPurchaseService.Instance?.CollectOwnQueues(args, MaxQueuesPerPlayer - (args.Count / EntryArgs), MaxRunsPerQueue);
+    }
+
     private void SendReport()
     {
         scratch.Clear();
-        spawnService.CollectOwnQueues(scratch, MaxQueuesPerPlayer, MaxRunsPerQueue);
+        CollectOwnQueues(scratch);
         if (scratch.Count == 0 && !reportedQueues)
         {
             return;
@@ -298,7 +305,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         if (ReferenceEquals(CommanderGameAccess.GetLocalHq(), hq))
         {
             scratch.Clear();
-            spawnService.CollectOwnQueues(scratch, MaxQueuesPerPlayer, MaxRunsPerQueue);
+            CollectOwnQueues(scratch);
             Player? local = LocalPlayer();
             string id = local != null ? local.NetId.ToString(CultureInfo.InvariantCulture) : string.Empty;
             string owner = OwnerName(local);
@@ -357,7 +364,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         {
             Entry entry = entries[i];
             bool known = CommanderNetwork.TryUnit(entry.DepotId, out Unit unit);
-            string units = DescribeRuns(entry, known ? unit as VehicleDepot : null);
+            string units = DescribeRuns(entry, known ? unit : null);
             if (units.Length == 0)
             {
                 continue;
@@ -373,7 +380,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
 
     internal sealed class TeamRun
     {
-        internal TeamRun(VehicleDepot depot, VehicleDefinition definition, int count, string owner, float buildDoneAt)
+        internal TeamRun(Unit depot, UnitDefinition definition, int count, string owner, float buildDoneAt)
         {
             Depot = depot;
             Definition = definition;
@@ -382,9 +389,10 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
             BuildDoneAt = buildDoneAt;
         }
 
-        internal VehicleDepot Depot { get; }
+        /// <summary>The vehicle depot or naval dock it is queued at.</summary>
+        internal Unit Depot { get; }
 
-        internal VehicleDefinition Definition { get; }
+        internal UnitDefinition Definition { get; }
 
         internal int Count { get; }
 

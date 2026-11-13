@@ -1029,6 +1029,12 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         RefreshOrderFlags();
     }
 
+    internal void ShowPlayerDestination(Unit unit, GlobalPosition destination)
+    {
+        stoppedUnits.Remove(unit);
+        playerDestinations[unit] = destination;
+    }
+
     internal bool TryGetPlayerDestination(Unit unit, out GlobalPosition destination)
     {
         return playerDestinations.TryGetValue(unit, out destination);

@@ -26,8 +26,10 @@ internal static class CommanderRepairPatches
 
         // A builder's destination is its blueprint; the repair search would drive it to the
         // nearest dent instead.
+        // Repair OFF: never repairs, only builds blueprints.
         if (CommanderSamSiteService.IsReservedConstructionJacknife(repairerUnit)
-            || CommanderEconomyService.IsBuilder(repairerUnit))
+            || CommanderEconomyService.IsBuilder(repairerUnit)
+            || CommanderRepairService.Instance?.IsRepairOff(repairerUnit) == true)
         {
             UnitToRepairField?.SetValue(__instance, null);
             RepairInProgressField?.SetValue(__instance, null);

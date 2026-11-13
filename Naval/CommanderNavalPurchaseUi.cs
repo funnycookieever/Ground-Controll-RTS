@@ -149,7 +149,7 @@ internal sealed class CommanderNavalPurchaseUi
         {
             y = 36f + 10f + CommanderUiTheme.DrawHelpOverlay(
                 new Rect(12f, 36f, windowRect.width - 24f, 92f),
-                "A naval dock unlocks all of this. Build one from the BUILD window on dry land at the water's edge, within the naval build radius of a base you hold; each of its three levels opens a heavier class of hull, and the enemy commander is on exactly the same ladder. Click a ship, then PURCHASE to queue it. Each hull takes a build time, longer for bigger ships (up to 3 minutes), counted down on its picture in the build queue; it is paid for when it launches, in the water beside the dock it was ordered at, and waits there for orders.");
+                "A naval dock unlocks all of this. Build one from the BUILD window on dry land at the water's edge, within the naval build radius of a base you hold; each of its three levels opens a heavier class of hull, and the enemy commander is on exactly the same ladder. Click a ship, then PURCHASE to queue it (Shift+click PURCHASE queues 5). Each hull takes a build time, longer for bigger ships (up to 3 minutes), counted down on its picture in the build queue; it is paid for when it launches, in the water beside the dock it was ordered at, and waits there for orders.");
         }
 
         if (GUI.Button(new Rect(windowRect.width - 34f, 3f, 26f, 22f), "X", CommanderUiTheme.ChromeButton))
@@ -192,11 +192,14 @@ internal sealed class CommanderNavalPurchaseUi
         const float footerHeight = 46f;
         string status = service.StatusText;
         float statusHeight = string.IsNullOrWhiteSpace(status) ? 0f : 40f;
+        List<string>? teamLines = CommanderTeamQueueService.Instance?.Lines;
+        int teamRows = Mathf.Min(teamLines?.Count ?? 0, CommanderDepotUi.MaxTeamLines);
+        float teamHeight = teamRows > 0 ? 28f + (teamRows * CommanderDepotUi.TeamLineHeight) : 0f;
 
         // The queue bar trades with the ship list, so a drag never pushes PURCHASE out.
-        float maxQueue = Mathf.Max(DefaultQueueHeight, windowRect.height - y - footerHeight - statusHeight - 12f - 120f);
+        float maxQueue = Mathf.Max(DefaultQueueHeight, windowRect.height - y - footerHeight - teamHeight - statusHeight - 12f - 120f);
         float queueHeight = CommanderWindowScale.Section(WindowId, QueueSlot, DefaultQueueHeight, DefaultQueueHeight, maxQueue);
-        float listHeight = Mathf.Max(120f, windowRect.height - y - footerHeight - queueHeight - statusHeight - 12f);
+        float listHeight = Mathf.Max(120f, windowRect.height - y - footerHeight - queueHeight - teamHeight - statusHeight - 12f);
         DrawShipList(new Rect(12f, y, windowRect.width - 24f - detailWidth - 8f, listHeight), dockLevel);
         DrawDetail(new Rect(windowRect.width - 12f - detailWidth, y, detailWidth, listHeight), dockLevel);
         CommanderWindowScale.Splitter(
@@ -206,14 +209,22 @@ internal sealed class CommanderNavalPurchaseUi
             WindowId, QueueSlot, new Rect(12f, y - 8f, windowRect.width - 24f, 8f), alongX: false, inverted: true, queueHeight, DefaultQueueHeight, maxQueue);
         DrawBuildQueue(new Rect(12f, y, windowRect.width - 24f, queueHeight - 8f));
         y += queueHeight;
+        if (teamRows > 0)
+        {
+            CommanderDepotUi.DrawTeamQueues(new Rect(12f, y, windowRect.width - 24f, teamHeight - 8f), teamLines!, teamRows);
+            y += teamHeight;
+        }
 
         ShipDefinition? selected = service.SelectedDefinition;
         bool oldEnabled = GUI.enabled;
         GUI.enabled = oldEnabled && selected != null && LockText(selected, dockLevel) == null;
         string purchase = selected != null ? $"PURCHASE   {PriceLabel(selected)}" : "NO SHIPS AVAILABLE";
-        if (GUI.Button(new Rect(12f, y, windowRect.width - 24f, 38f), purchase, CommanderUiTheme.PrimaryButton))
+        if (GUI.Button(new Rect(12f, y, windowRect.width - 24f, 38f), new GUIContent(purchase, "Shift+click queues 5."), CommanderUiTheme.PrimaryButton))
         {
-            service.BeginPurchase();
+            for (int n = Event.current.shift ? 5 : 1; n > 0; n--)
+            {
+                service.BeginPurchase();
+            }
         }
 
         GUI.enabled = oldEnabled;
@@ -239,7 +250,15 @@ internal sealed class CommanderNavalPurchaseUi
             service.ClearBuildQueue();
         }
 
-        if (queue.Count == 0)
+        List<CommanderTeamQueueService.TeamRun>? teamRuns = CommanderTeamQueueService.Instance?.Runs;
+        Unit? dock = service.SelectedDock;
+        bool teamQueued = false;
+        for (int i = 0; dock != null && teamRuns != null && i < teamRuns.Count && !teamQueued; i++)
+        {
+            teamQueued = ReferenceEquals(teamRuns[i].Depot, dock);
+        }
+
+        if (queue.Count == 0 && !teamQueued)
         {
             GUI.Label(new Rect(rect.x + 10f, rect.y + 22f, rect.width - clearWidth - 26f, rect.height - 26f), "Nothing building. Pick a ship and press PURCHASE.", CommanderUiTheme.MutedLabel);
             return;
@@ -247,34 +266,62 @@ internal sealed class CommanderNavalPurchaseUi
 
         float x = rect.x + 10f;
         float tileHeight = rect.height - 24f;
+        float limit = rect.xMax - clearWidth - 16f;
+        if (!DrawOwnQueue(queue, ref x, rect.y, tileHeight, limit))
+        {
+            return;
+        }
+
+        // Teammates' hulls at this dock: theirs to cancel, so these only show.
+        for (int i = 0; dock != null && teamRuns != null && i < teamRuns.Count; i++)
+        {
+            CommanderTeamQueueService.TeamRun run = teamRuns[i];
+            if (!ReferenceEquals(run.Depot, dock))
+            {
+                continue;
+            }
+
+            float teamLeft = run.BuildDoneAt >= 0f ? Mathf.Max(0f, run.BuildDoneAt - Time.time) : -1f;
+            if (!CommanderDepotUi.DrawQueueTile(ref x, rect.y + 20f, tileHeight * 1.4f, tileHeight, limit, run.Definition, run.Count, out _, teamLeft, 0f, run.Owner))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>False when the row is full or a click just changed the queue.</summary>
+    private bool DrawOwnQueue(IReadOnlyList<ShipDefinition> queue, ref float x, float rectY, float tileHeight, float limit)
+    {
         bool blocked = service.LaunchBlocked;
         string? held = service.HeldReason;
         float buildLeft = blocked || held != null ? -1f : service.BuildLeft;
         for (int i = 0; i < queue.Count; i++)
         {
             float tileX = x;
-            bool fits = CommanderDepotUi.DrawQueueTile(ref x, rect.y + 20f, tileHeight * 1.4f, tileHeight, rect.xMax - clearWidth - 16f, queue[i], 1, out bool clicked, i == 0 ? buildLeft : -1f, service.BuildSeconds);
+            bool fits = CommanderDepotUi.DrawQueueTile(ref x, rectY + 20f, tileHeight * 1.4f, tileHeight, limit, queue[i], 1, out bool clicked, i == 0 ? buildLeft : -1f, service.BuildSeconds);
             if (clicked)
             {
                 service.CancelQueued(i);
-                return;
+                return false;
             }
 
             if (!fits)
             {
-                return;
+                return false;
             }
 
             // Built, but no clear water to launch into: a countdown stuck at 0:01 read as a hang.
             if (i == 0 && blocked)
             {
-                GUI.Label(new Rect(tileX + 4f, rect.y + 21f, (tileHeight * 1.4f) - 8f, 16f), new GUIContent("NO WATER", "No clear water beside the dock. Move the ships waiting there, or set a rally point."), CommanderUiTheme.Caption);
+                GUI.Label(new Rect(tileX + 4f, rectY + 21f, (tileHeight * 1.4f) - 8f, 16f), new GUIContent("NO WATER", "No clear water beside the dock. Move the ships waiting there, or set a rally point."), CommanderUiTheme.Caption);
             }
             else if (i == 0 && held != null)
             {
-                GUI.Label(new Rect(tileX + 4f, rect.y + 21f, (tileHeight * 1.4f) - 8f, 16f), new GUIContent("ON HOLD", held), CommanderUiTheme.Caption);
+                GUI.Label(new Rect(tileX + 4f, rectY + 21f, (tileHeight * 1.4f) - 8f, 16f), new GUIContent("ON HOLD", held), CommanderUiTheme.Caption);
             }
         }
+
+        return true;
     }
 
     private void DrawShipList(Rect view, int dockLevel)
@@ -322,6 +369,10 @@ internal sealed class CommanderNavalPurchaseUi
                 CommanderBuildTimes.Format(CommanderBuildTimes.For(ship))))
             {
                 service.SelectDefinition(i);
+                for (int n = Event.current.shift ? 5 : 0; n > 0; n--)
+                {
+                    service.BeginPurchase();
+                }
             }
         }
 
