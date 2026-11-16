@@ -195,17 +195,38 @@ internal static class CommanderFactionVehiclePatches
     }
 
     /// <summary>
-    /// A trailer cannot drive out of the door, so it sat in the lane until the stuck sweep moved it
-    /// to the side. It goes straight to the verge instead.
+    /// A static trailer starts deployed beside the depot, before its initial state reaches guests.
     /// </summary>
-    [HarmonyPatch(typeof(GroundVehicle), nameof(GroundVehicle.MoveFromDepot))]
+    [HarmonyPatch(typeof(GroundVehicle), "OnStartServer")]
     [HarmonyPostfix]
-    private static void MoveFromDepotPostfix(GroundVehicle __instance)
+    private static void TrailerStartServerPostfix(GroundVehicle __instance)
     {
-        if (spawningDepot != null && CommanderGameAccess.IsTrailerVehicleDefinition(__instance.definition as VehicleDefinition))
+        if (spawningDepot != null && CommanderGameAccess.IsTrailerVehicleDefinition(__instance.definition as VehicleDefinition)
+            && CommanderDepotLane.ParkTrailer(spawningDepot, __instance))
         {
-            CommanderDepotLane.ParkTrailer(spawningDepot, __instance);
+            __instance.SetHoldPosition(true);
+            __instance.NetworknetworkStationary = true;
+            if (!__instance.IsHost)
+            {
+                __instance.OnStationaryChanged(true);
+            }
         }
+    }
+
+    [HarmonyPatch(typeof(VehicleDepot), "MoveVehicleFromDepot")]
+    [HarmonyPrefix]
+    private static bool MoveVehicleFromDepotPrefix(GroundVehicle spawnedVehicle)
+    {
+        return !spawnedVehicle.NetworknetworkStationary
+            || !CommanderGameAccess.IsTrailerVehicleDefinition(spawnedVehicle.definition as VehicleDefinition);
+    }
+
+    [HarmonyPatch(typeof(GroundVehicle), nameof(GroundVehicle.MoveFromDepot))]
+    [HarmonyPrefix]
+    private static bool MoveFromDepotPrefix(GroundVehicle __instance)
+    {
+        return spawningDepot == null || !__instance.NetworknetworkStationary
+            || !CommanderGameAccess.IsTrailerVehicleDefinition(__instance.definition as VehicleDefinition);
     }
 
     /// <summary>

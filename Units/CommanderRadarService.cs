@@ -31,6 +31,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
     private readonly HashSet<Unit> nearbyLauncherUnits = new();
     private readonly Dictionary<Unit, Radar[]> radarsByUnit = new();
     private readonly Dictionary<Unit, Turret[]> turretsByUnit = new();
+    private readonly Dictionary<Unit, string> hostLauncherLinks = new();
 
     /// <summary>What each radar-guided launcher was last warned about, so one toast is one shortfall
     /// rather than one every sweep. Cleared when the launcher is linked up.</summary>
@@ -48,6 +49,8 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
         Instance = this;
         CommanderNetwork.OnHost("radar", HostRadar);
         CommanderNetwork.OnHost("ignoreart", HostIgnoreArtillery);
+        CommanderNetwork.OnSync(SyncLauncherLinks);
+        CommanderNetwork.OnGuest("radar.links", ApplyLauncherLinks);
     }
 
     internal static CommanderRadarService? Instance { get; private set; }
@@ -76,6 +79,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
         nearbyRadarUnits.Clear();
         nearbyLauncherUnits.Clear();
         launcherWarnings.Clear();
+        hostLauncherLinks.Clear();
         IgnoreArtilleryUnits.Clear();
     }
 
@@ -106,13 +110,19 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
     /// <summary>
     /// Why a radar-guided launcher cannot shoot, or empty when it can. This is the game own rule,
     /// not a guess: <c>Turret.SearchForRadar</c> asks <c>FactionHQ.TryGetFireControl</c> for a fire
-    /// control within <see cref="ControlRangeMeters"/> and then that truck for a radar, and
+    /// control within <see cref="ControlRangeMeters"/> and then that truck for a radar, or links
+    /// directly to a nearby radar.
     /// <c>FireControl.SearchForRadar</c> asks <c>FactionHQ.TryGetRadar</c> over the same 300 m - which
     /// is why a radar station on the base counts, its <c>Radar</c> is registered with the faction like
     /// any other.
     /// </summary>
     internal static string GetLauncherLinkShortfall(Unit launcher)
     {
+        if (!launcher.IsServer)
+        {
+            return Instance != null && Instance.hostLauncherLinks.TryGetValue(launcher, out string shortfall) ? shortfall : string.Empty;
+        }
+
         FactionHQ? hq = launcher.NetworkHQ;
         if (hq == null)
         {
@@ -120,16 +130,15 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
         }
 
         GlobalPosition position = launcher.GlobalPosition();
-        if (!hq.TryGetFireControl(position, ControlRangeMeters, out FireControl fireControl) || fireControl == null)
+        if (hq.TryGetFireControl(position, ControlRangeMeters, out FireControl fireControl)
+            && fireControl != null && fireControl.TryGetRadar(out _))
         {
-            return hq.TryGetRadar(position, ControlRangeMeters, out _)
-                ? "no fire control within 300 m"
-                : "no fire control or radar within 300 m";
+            return string.Empty;
         }
 
-        return fireControl.TryGetRadar(out Radar radar) && radar != null
+        return hq.TryGetRadar(position, ControlRangeMeters, out _)
             ? string.Empty
-            : "its fire control has no radar within 300 m";
+            : fireControl != null ? "its fire control has no radar within 300 m" : "no fire control or radar within 300 m";
     }
 
     /// <summary>
@@ -154,7 +163,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
     /// </summary>
     internal static bool IsRadarGuidedLauncherUncached(Unit? unit)
     {
-        return unit != null && !unit.disabled && HasRadarSeekingTurret(unit.GetComponentsInChildren<Turret>());
+        return unit != null && !unit.disabled && HasRadarSeekingTurret(unit.GetComponentsInChildren<Turret>(true));
     }
 
     /// <summary>
@@ -334,7 +343,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
             return true;
         }
 
-        Radar[] radars = unit.GetComponentsInChildren<Radar>();
+        Radar[] radars = unit.GetComponentsInChildren<Radar>(true);
         if (radars.Length == 0 || (enable && !HasOperationalRadar(radars)))
         {
             return false;
@@ -342,6 +351,25 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
 
         ApplyRadarState(unit, radars, enable);
         return true;
+    }
+
+    internal void OnRegisterUnit(Unit unit)
+    {
+        CacheUnitSystems(unit);
+    }
+
+    private static void SyncLauncherLinks(FactionHQ hq, List<string[]> messages)
+    {
+        List<string> args = new() { "radar.links" };
+        foreach (PersistentID id in hq.factionUnits)
+        {
+            if (id.TryGetUnit(out Unit unit) && IsRadarGuidedLauncherUncached(unit))
+            {
+                args.Add($"{CommanderNetwork.Id(unit)} {GetLauncherLinkShortfall(unit)}");
+            }
+        }
+
+        messages.Add(args.ToArray());
     }
 
     private static void SetIgnoreArtillery(Unit unit, bool enable)
@@ -359,7 +387,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
 
     private static FireControl? FindBatteryController(Unit unit)
     {
-        FireControl[] fireControls = unit.GetComponentsInChildren<FireControl>();
+        FireControl[] fireControls = unit.GetComponentsInChildren<FireControl>(true);
         for (int i = 0; i < fireControls.Length; i++)
         {
             if (string.Equals(FireControlModeField?.GetValue(fireControls[i])?.ToString(), "searchForRadar", System.StringComparison.Ordinal))
@@ -501,7 +529,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
 
         inspectedUnit = unit;
 
-        Radar[] radars = unit.GetComponentsInChildren<Radar>();
+        Radar[] radars = unit.GetComponentsInChildren<Radar>(true);
         FireControl? batteryController = FindBatteryController(unit);
         if (radars.Length == 0 && batteryController == null)
         {
@@ -658,11 +686,6 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
         turretsByUnit.Clear();
     }
 
-    private void OnRegisterUnit(Unit unit)
-    {
-        CacheUnitSystems(unit);
-    }
-
     private void OnRemoveUnit(Unit unit)
     {
         radarsByUnit.Remove(unit);
@@ -678,7 +701,7 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
 
         // Radars are cached off any unit, radar stations included: the fire-control network links to any
         // emitter within 300 m, and a building Radar registers with the faction like a truck one.
-        Radar[] radars = unit.GetComponentsInChildren<Radar>();
+        Radar[] radars = unit.GetComponentsInChildren<Radar>(true);
         if (radars.Length > 0)
         {
             radarsByUnit[unit] = radars;
@@ -689,10 +712,23 @@ internal sealed class CommanderRadarService : ICommanderActivate, ICommanderDeac
             return;
         }
 
-        Turret[] turrets = unit.GetComponentsInChildren<Turret>();
+        Turret[] turrets = unit.GetComponentsInChildren<Turret>(true);
         if (turrets.Length > 0)
         {
             turretsByUnit[unit] = turrets;
+        }
+    }
+
+    private void ApplyLauncherLinks(string[] args)
+    {
+        hostLauncherLinks.Clear();
+        for (int i = 1; i < args.Length; i++)
+        {
+            int separator = args[i].IndexOf(' ');
+            if (separator > 0 && CommanderNetwork.TryUnit(args[i].Substring(0, separator), out Unit unit))
+            {
+                hostLauncherLinks[unit] = args[i].Substring(separator + 1);
+            }
         }
     }
 

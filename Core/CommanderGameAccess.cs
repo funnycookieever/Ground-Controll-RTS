@@ -871,6 +871,8 @@ internal static class CommanderGameAccess
         }
 
         vehicle.transform.SetPositionAndRotation(local, rotation);
+        vehicle.NetworkstartPosition = local.ToGlobalPosition();
+        vehicle.NetworkstartRotation = rotation;
         if (vehicle.rb != null)
         {
             vehicle.rb.position = local;

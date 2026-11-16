@@ -154,11 +154,11 @@ internal static class CommanderDepotLane
     }
 
     /// <summary>Host, at spawn: sets a trailer down beside the exit lane, clear of the ones already there.</summary>
-    internal static void ParkTrailer(VehicleDepot depot, GroundVehicle trailer)
+    internal static bool ParkTrailer(VehicleDepot depot, GroundVehicle trailer)
     {
         if (!CommanderSpawnService.TryFindClearVerge(depot, 60f, out GlobalPosition origin, out Vector3 verge, out float clear))
         {
-            return;
+            return false;
         }
 
         // Down the verge from its far end, one trailer length at a time, till a spot is free.
@@ -174,6 +174,7 @@ internal static class CommanderDepotLane
 
         CommanderGameAccess.TeleportGroundVehicle(trailer, spot);
         CommanderRepairService.Instance?.SetHome(trailer, spot);
+        return true;
     }
 
     internal static bool IsVehicleNear(GlobalPosition spot, Unit? except = null)
