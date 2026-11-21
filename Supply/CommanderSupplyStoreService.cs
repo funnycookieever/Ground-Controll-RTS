@@ -695,8 +695,6 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
                 return;
             }
         }
-
-        CommanderPlugin.Log.LogDebug($"Supply self-check passed ({buys} purchases fill a depot).");
     }
 
     internal float GetFuelKg(Unit? unit)
@@ -1833,7 +1831,7 @@ internal sealed class CommanderSupplyStoreService : ICommanderTickPersistent, IC
             Unit store = stores[i];
             if (store is Ship)
             {
-                // A faction's first ship can be its first store; it sails out full, not on the opening shoestring.
+                // Ships start full: the Leviathan fleet opens at sea, and a faction's first ship can be its first store.
                 continue;
             }
 

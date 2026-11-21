@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using NuclearOption.SavedMission.Outcomes;
 using UnityEngine;
 
@@ -72,12 +72,15 @@ internal sealed class CommanderVictoryService : ICommanderTickPersistent, IComma
 
         foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
         {
-            if (hq == null || !hq.IsServer || hq.faction == null)
+            // The Leviathan's army holds bases only while it is winning; losing them all is no defeat.
+            if (hq == null || !hq.IsServer || hq.faction == null || CommanderLeviathanDeepService.IsDeep(hq))
             {
                 continue;
             }
 
-            if (RanOutOfUnits(hq))
+            // The Leviathan is co-op (user, 2026-11-06): the Deep wins only by taking every base and
+            // carrier the players hold, never because they are out of units for a moment.
+            if (!CommanderLeviathanService.IsLeviathanMission && RanOutOfUnits(hq))
             {
                 declared = true;
                 hq.DeclareEndGame(EndType.Defeat);

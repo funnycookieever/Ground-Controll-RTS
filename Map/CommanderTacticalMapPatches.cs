@@ -359,6 +359,13 @@ internal static class CommanderTacticalMapPatches
             {
                 __instance.iconImage.transform.localScale *= 1.4f;
             }
+
+            // The Leviathan's body and arms are kilometres across; a building-sized dot was too
+            // small to find and click on the map.
+            if (__instance.iconImage != null && __instance.unit != null && CommanderLeviathanWorld.IsBigMapTarget(__instance.unit))
+            {
+                __instance.iconImage.transform.localScale *= CommanderLeviathanWorld.MapTargetIconScale;
+            }
         }
     }
 

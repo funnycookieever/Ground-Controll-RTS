@@ -168,6 +168,11 @@ internal sealed class CommanderModeController : MonoBehaviour
         // GOD DIFFICULTY's voice. Core tier: it has to speak whether or not RTS mode is open.
         services.Register(new CommanderGodService());
 
+        // The Leviathan event. Core tier, like GOD: pilots see it whether or not RTS mode is open.
+        services.Register(new CommanderLeviathanService());
+        services.Register(new CommanderLeviathanShieldService());
+        services.Register(new CommanderLeviathanDeepService());
+
         CommanderRepairService repairService = services.Register(new CommanderRepairService());
 
         // Routes tick last so orders act on this frame's spawns and kills.
@@ -299,6 +304,7 @@ internal sealed class CommanderModeController : MonoBehaviour
         try
         {
             CommanderGodUi.Draw();
+            CommanderLeviathanUi.Draw();
             CommanderPriceEditorUi.Draw();
             if (!IsActive)
             {

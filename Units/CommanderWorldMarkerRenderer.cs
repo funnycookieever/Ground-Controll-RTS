@@ -85,6 +85,7 @@ internal sealed class CommanderWorldMarkerRenderer
         CommanderCockpitMarkerUi.DrawCommanderView(camera, IsSceneHiddenByMap);
         DrawCaptureTargets(camera);
         DrawRepairCountdowns(camera);
+        DrawShieldCountdowns(camera, selectionService.SelectedUnits);
         CommanderRadarExposure.Draw();
 
         // An enemy can be selected to inspect it, but its orders (the AI commander's capture runs)
@@ -229,6 +230,59 @@ internal sealed class CommanderWorldMarkerRenderer
             GlobalPosition above = building.startPosition + (Vector3.up * (building.definition.height + 10f));
             DrawWorldPoint(camera, above, label, RepairColor, 30f);
         }
+    }
+
+    /// <summary>A shield bubble that is down, with how long until it is back, like a repair.</summary>
+    private static void DrawShieldCountdowns(Camera camera, IReadOnlyList<Unit> selected)
+    {
+        if (IsSceneHiddenByMap)
+        {
+            return;
+        }
+
+        for (int i = 0; i < CommanderLeviathanShieldService.Count; i++)
+        {
+            if (!CommanderLeviathanShieldService.TryGetState(i, out Unit unit, out float health, out float max, out float seconds, out bool switchedOff))
+            {
+                continue;
+            }
+
+            string label;
+            if (switchedOff)
+            {
+                label = "SHIELD OFF";
+            }
+            else if (health <= 0f)
+            {
+                int whole = Mathf.CeilToInt(seconds);
+                label = $"SHIELD DOWN  {whole / 60}:{whole % 60:00}";
+            }
+            else if (IsSelected(selected, unit))
+            {
+                // A live bubble only shows its points on the unit the player has selected.
+                label = $"SHIELD  {Mathf.CeilToInt(health)} / {Mathf.CeilToInt(max)}";
+            }
+            else
+            {
+                continue;
+            }
+
+            GlobalPosition above = unit.GlobalPosition() + (Vector3.up * (unit.definition.height + 30f));
+            DrawWorldPoint(camera, above, label, RepairColor, 30f);
+        }
+    }
+
+    private static bool IsSelected(IReadOnlyList<Unit> selected, Unit unit)
+    {
+        for (int i = 0; i < selected.Count; i++)
+        {
+            if (ReferenceEquals(selected[i], unit))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>A munitions bunker, an ammo dump or a munitions truck: the stores a unit parked beside rearms from.</summary>
@@ -664,8 +718,7 @@ internal sealed class CommanderWorldMarkerRenderer
             {
                 // The base game shows capture progress nowhere outside its debug overlay, so
                 // without this a squad standing in the ring looks like a squad doing nothing.
-                bool ours = target.CapturingHq == null
-                    || ReferenceEquals(target.CapturingHq, CommanderGameAccess.GetLocalHq());
+                bool ours = target.IsCapturedBy(CommanderGameAccess.GetLocalHq());
                 color = ours ? CapturingBaseColor : LosingBaseColor;
 
                 // "CONTESTED" is a stalemate in the ring; an enemy taking the base is a moving bar.

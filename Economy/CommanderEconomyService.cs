@@ -390,8 +390,7 @@ internal sealed partial class CommanderEconomyService
             if (unit == null
                 || unit.disabled
                 || unit.NetworkHQ != hq
-                || unit.definition is not BuildingDefinition built
-                || !CommanderBuildPreview.IsControlTower(built))
+                || !CommanderBuildPreview.IsControlTowerUnit(unit))
             {
                 continue;
             }
@@ -441,8 +440,7 @@ internal sealed partial class CommanderEconomyService
             if (tower == null
                 || tower.disabled
                 || tower.NetworkHQ != hq
-                || tower.definition is not BuildingDefinition towerDefinition
-                || !CommanderBuildPreview.IsControlTower(towerDefinition)
+                || !CommanderBuildPreview.IsControlTowerUnit(tower)
                 || FlatDistanceSquared(tower.transform.position, position) > radiusSquared)
             {
                 continue;
@@ -1370,6 +1368,12 @@ internal sealed partial class CommanderEconomyService
             return false;
         }
 
+        if (placed.jsonKey == CommanderLeviathanShieldService.GeneratorKey && CountGeneratorsUsed(hq) >= CommanderLeviathanShieldService.GeneratorsPerSide)
+        {
+            StatusText = $"Only {CommanderLeviathanShieldService.GeneratorsPerSide} Shield Generators a side per match, destroyed ones included.";
+            return false;
+        }
+
         // A blueprint is not spawned until it is finished, so nothing downstream checks the site
         // before the money is taken; a guest's forwarded click has had no ghost to check it either.
         if (!preview.IsSiteAllowed(placed, position, hq, out string blocked, kind == CommanderBuildKind.NavalDock, rotation))
@@ -1381,6 +1385,20 @@ internal sealed partial class CommanderEconomyService
         hq.AddFunds(-cost);
         PlaceBlueprint(kind, placed, production, hq, position, cost, label, rotation);
         return true;
+    }
+
+    private int CountGeneratorsUsed(FactionHQ hq)
+    {
+        int used = CommanderLeviathanShieldService.GeneratorsUsed(hq);
+        for (int i = 0; i < constructionSites.Count; i++)
+        {
+            if (ReferenceEquals(constructionSites[i].Hq, hq) && constructionSites[i].Definition.jsonKey == CommanderLeviathanShieldService.GeneratorKey)
+            {
+                used++;
+            }
+        }
+
+        return used;
     }
 
     private string PendingBuildLabel()

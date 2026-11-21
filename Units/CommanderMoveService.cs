@@ -1312,6 +1312,13 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         // where it was seen and waits there instead of homing on it through the fog. Nothing known
         // at all means hold.
         GlobalPosition targetPosition = unit.NetworkHQ?.GetKnownPosition(target) ?? unit.GlobalPosition();
+
+        // The Leviathan's copy stands kilometres inside its waist: close on the skin instead.
+        if (CommanderLeviathanWorld.IsCopy(target))
+        {
+            targetPosition = CommanderLeviathanWorld.SkinAimPoint(unit.transform.position);
+        }
+
         if (!CommanderSettings.AttackMoveIntoRange)
         {
             return targetPosition;

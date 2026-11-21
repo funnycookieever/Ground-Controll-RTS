@@ -226,6 +226,9 @@ internal static class CommanderSettings
     /// <summary>GOD DIFFICULTY on every Champions match, not only one with a 10 B budget.</summary>
     internal static bool ForceGodDifficulty { get => Get("Gameplay", "ForceGodDifficulty", false); set => Set("Gameplay", "ForceGodDifficulty", value); }
 
+    /// <summary>The Leviathan as a scaled sea creature instead of a giant made of seawater.</summary>
+    internal static bool LeviathanFlesh { get => Get("Gameplay", "LeviathanFlesh", false); set => Set("Gameplay", "LeviathanFlesh", value); }
+
     // Economy prices are mission-relative: faction balances are authored per mission (about 1000
     // at the start of Escalation), so these are knobs, not constants.
 
@@ -531,6 +534,7 @@ internal static class CommanderSettings
         _ = TacticalMapSize;
         _ = MapDragSpeed;
         _ = MapZoomSpeed;
+        _ = LeviathanFlesh;
         _ = AutoFrameSelection;
         _ = CameraPanSpeed;
         _ = CameraZoomSpeed;

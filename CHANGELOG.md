@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- The Leviathan's health bar text is larger, outlined and in the game's HUD font, so its numbers are easy to tell apart.
+
+## 1.0.0.3
+
+### Added
+
+- Leviathan support, only on GC servers
+
 ### Fixed
 
 - A damaged aircraft's COND now counts its wings, engines and every other part, not just the cockpit, so a badly hit aircraft no longer reads 100%.

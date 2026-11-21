@@ -68,6 +68,7 @@ internal sealed partial class CommanderEconomyService
             "ammunitionBunker" => 300f,
             "radarStation1" => 50f,
             "controlTower1" => 750f,
+            CommanderLeviathanShieldService.GeneratorKey => CommanderLeviathanShieldService.GeneratorCost,
             _ => definition.unitName switch
             {
                 "Helipad" => 100f,
@@ -191,6 +192,12 @@ internal sealed partial class CommanderEconomyService
             }
 
             catalog.Add(candidate);
+        }
+
+        BuildingDefinition? generator = CommanderLeviathanShieldService.GeneratorDefinition;
+        if (generator != null)
+        {
+            catalog.Add(generator);
         }
 
         catalog.Sort((a, b) => a.buildingType != b.buildingType

@@ -52,8 +52,8 @@ internal static class CommanderNotice
         // The plate grows to however many lines the message takes.
         float height = CommanderUiTheme.RowHeight(CommanderUiTheme.Alert, width, message, 54f);
 
-        // Below the funds box, which sits at the top centre.
-        Rect rect = new((CommanderUiScale.Width - width) * 0.5f, 96f, width, height);
+        // Below the funds box, which sits at the top centre, and below the Leviathan's health bar.
+        Rect rect = new((CommanderUiScale.Width - width) * 0.5f, Mathf.Max(96f, CommanderLeviathanUi.BottomY + 8f), width, height);
         GUI.Box(rect, message, CommanderUiTheme.Alert);
     }
 }

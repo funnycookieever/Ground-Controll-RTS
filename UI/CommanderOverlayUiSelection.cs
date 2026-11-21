@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 namespace GroundControlRts;
@@ -478,8 +478,9 @@ internal sealed partial class CommanderOverlayUi
         // second line, and a button too short for two lines shows the top and bottom halves of each.
         bool movable = moveService.HasCommandableSelection;
         bool radarSam = radarService.TryGetSelectionIgnoreArtillery(out bool ignoreArtillery);
-        float columns = (movable ? 5.5f : 4f) + (radarSam ? 1f : 0f);
-        float gaps = (movable ? 4f : 3f) + (radarSam ? 1f : 0f);
+        bool shield = CommanderLeviathanShieldService.TryGetSelectionOn(selectionService.SelectedUnits, out bool shieldLive, out bool shieldOn);
+        float columns = (movable ? 5.5f : 4f) + (radarSam ? 1f : 0f) + (shield ? 1f : 0f);
+        float gaps = (movable ? 4f : 3f) + (radarSam ? 1f : 0f) + (shield ? 1f : 0f);
         float width = (selectionMoreRect.width - 28f - (gaps * 6f)) / columns;
         float x = selectionMoreRect.x + 14f;
         float y = selectionMoreRect.y + 5f;
@@ -589,6 +590,22 @@ internal sealed partial class CommanderOverlayUi
                 ignoreArtillery ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
             {
                 radarService.ToggleSelectionIgnoreArtillery();
+            }
+        }
+
+        if (shield)
+        {
+            x += width + 6f;
+            GUI.enabled = oldEnabled && shieldLive;
+            string shieldTip = shieldLive
+                ? "Raises or lowers the selected Shield Generators' bubbles. A lowered bubble stops nothing but keeps its charge."
+                : "The selected Shield Generator is destroyed. Its bubble is gone for good.";
+            if (CommanderUiTheme.FitWordButton(
+                new Rect(x, y, width, 32f),
+                new GUIContent(!shieldLive ? "NO SHIELD" : shieldOn ? "SHIELD: ON" : "SHIELD: OFF", shieldTip),
+                !shieldLive || shieldOn ? CommanderUiTheme.Button : CommanderUiTheme.SelectedButton))
+            {
+                CommanderLeviathanShieldService.ToggleSelection(selectionService.SelectedUnits);
             }
         }
 

@@ -77,9 +77,7 @@ internal static class CommanderForwardBase
     /// <summary>Host only. Called for every finished building; does nothing unless it is a tower.</summary>
     internal static void OnBuilt(FactionHQ hq, Unit tower, IEnumerable<Unit> builtUnits)
     {
-        if (tower.definition is not BuildingDefinition definition
-            || !CommanderBuildPreview.IsControlTower(definition)
-            || AirbasesByTower.ContainsKey(tower))
+        if (!CommanderBuildPreview.IsControlTowerUnit(tower) || AirbasesByTower.ContainsKey(tower))
         {
             return;
         }

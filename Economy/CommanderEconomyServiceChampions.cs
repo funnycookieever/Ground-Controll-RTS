@@ -159,6 +159,23 @@ internal sealed partial class CommanderEconomyService
     }
 
     /// <summary>
+    /// Host: a free vehicle depot for <paramref name="hq"/> beside <paramref name="anchor"/>, placed like
+    /// the Champions kit. The Leviathan's Deep raises one on every base it takes.
+    /// </summary>
+    internal Unit? PlaceFreeDepot(FactionHQ hq, GlobalPosition anchor)
+    {
+        BuildingDefinition? depot = Encyclopedia.i != null ? FindBuilding(Encyclopedia.i, VehicleDepotKeys) : null;
+        return depot != null ? PlaceKitBuilding(hq, depot, anchor, out _) : null;
+    }
+
+    /// <summary>Host: a free control tower for <paramref name="hq"/> beside <paramref name="anchor"/>: the Deep's healing beacon.</summary>
+    internal Unit? PlaceFreeTower(FactionHQ hq, GlobalPosition anchor, string label)
+    {
+        BuildingDefinition? tower = Encyclopedia.i?.buildings.Find(d => d != null && d.unitPrefab != null && CommanderBuildPreview.IsControlTower(d));
+        return tower != null ? PlaceKitBuilding(hq, tower, anchor, out _, label) : null;
+    }
+
+    /// <summary>
     /// Ground Control Draft's one piece of setup: a munitions bunker near <paramref name="anchor"/>
     /// (the side's first depot), because the duel's buildings carry no ammunition shelf and a draft
     /// cannot build one. It never runs dry once the battle starts (<c>RefillDraftBuildings</c>).
@@ -254,6 +271,13 @@ internal sealed partial class CommanderEconomyService
             || FactionRegistry.airbaseLookup == null
             || Encyclopedia.i?.buildings == null)
         {
+            return;
+        }
+
+        // The Leviathan event opens at sea with every base neutral (user, 2026-11-05): nothing to deal.
+        if (CommanderLeviathanService.IsLeviathanMission)
+        {
+            championsDealt = true;
             return;
         }
 
@@ -410,13 +434,19 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private bool TryPlaceKitBuilding(FactionHQ hq, BuildingDefinition definition, GlobalPosition anchor, out bool byRoad)
     {
+        return PlaceKitBuilding(hq, definition, anchor, out byRoad) != null;
+    }
+
+    private Unit? PlaceKitBuilding(FactionHQ hq, BuildingDefinition definition, GlobalPosition anchor, out bool byRoad, string? label = null)
+    {
         GlobalPosition site = default;
         Quaternion facing = Quaternion.identity;
         byRoad = CommanderBuildPreview.TryGetDoor(definition, out _, out _)
             && preview.TryFindRoadsideSite(
                 definition, hq, anchor, BaseSiteMaxMeters, SiteDice, KitSiteAttempts, out site, out facing);
-        return (byRoad || TryFindSiteNear(hq, definition, anchor, out site, KitSiteAttempts))
-            && SpawnBuilding(hq, site, definition, GetStructureLabel(definition), facing: facing) != null;
+        return byRoad || TryFindSiteNear(hq, definition, anchor, out site, KitSiteAttempts)
+            ? SpawnBuilding(hq, site, definition, label ?? GetStructureLabel(definition), facing: facing)
+            : null;
     }
 
     /// <summary>

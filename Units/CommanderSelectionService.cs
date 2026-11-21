@@ -391,9 +391,9 @@ internal sealed class CommanderSelectionService : ICommanderActivate, ICommander
             {
                 dynamicMap.DeselectAllIcons();
             }
-            catch (Exception error)
+            catch (Exception)
             {
-                CommanderPlugin.Log.LogDebug($"Map icons were already gone when the selection was cleared: {error.Message}");
+                // Map icons were already gone when the selection was cleared.
             }
         }
 

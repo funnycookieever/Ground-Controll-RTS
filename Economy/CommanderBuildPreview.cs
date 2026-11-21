@@ -294,6 +294,17 @@ internal sealed class CommanderBuildPreview
     }
 
     /// <summary>
+    /// A standing building that is a real control tower. The Leviathan's Shield Generators and Deep
+    /// beacons are spawned on the tower prefab, so their definition says tower, but they are not one.
+    /// </summary>
+    internal static bool IsControlTowerUnit(Unit unit)
+    {
+        return unit.definition is BuildingDefinition definition
+            && IsControlTower(definition)
+            && !CommanderLeviathanDeepService.IsTowerLookalike(unit);
+    }
+
+    /// <summary>
     /// True when the site sits on an airbase's operating surface — a runway or a taxiway, for any
     /// airbase on the map, not only the ones this faction holds.
     /// </summary>

@@ -334,6 +334,13 @@ internal sealed partial class CommanderEnemyCommanderService : ICommanderTickPer
     {
         get
         {
+            // The Leviathan is the opponent there (user, 2026-11-05); its name contains Champions,
+            // so this has to come first.
+            if (CommanderLeviathanService.IsLeviathanMission)
+            {
+                return ModeOff;
+            }
+
             if (IsChampionsMission)
             {
                 return ModeMission;

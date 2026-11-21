@@ -211,7 +211,6 @@ internal static class CommanderCameraTuning
 
         if (failures.Count == 0)
         {
-            CommanderPlugin.Log.LogDebug("Camera tuning self-check passed.");
             return;
         }
 
