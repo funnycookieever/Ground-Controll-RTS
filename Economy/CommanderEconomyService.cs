@@ -1368,6 +1368,14 @@ internal sealed partial class CommanderEconomyService
             return false;
         }
 
+        if (kind == CommanderBuildKind.Factory
+            && production is VehicleDefinition vehicle
+            && !CommanderFactionVehicleService.CanPurchase(vehicle, hq))
+        {
+            StatusText = $"{CommanderGameAccess.GetVehicleLabel(vehicle)} is not available to this faction.";
+            return false;
+        }
+
         if (placed.jsonKey == CommanderLeviathanShieldService.GeneratorKey && CountGeneratorsUsed(hq) >= CommanderLeviathanShieldService.GeneratorsPerSide)
         {
             StatusText = $"Only {CommanderLeviathanShieldService.GeneratorsPerSide} Shield Generators a side per match, destroyed ones included.";

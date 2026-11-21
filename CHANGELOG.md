@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- The depot faction vehicle limit now applies to factory products.
 - A damaged aircraft's COND now counts its wings, engines and every other part, not just the cockpit, so a badly hit aircraft no longer reads 100%.
 - Remove area fire fro balistic and nucelar balistic launchers
 - Air defence now tries to shoot down area-fire shells, rockets and ballistic missiles that have no locked target, aimed at the spot where they will land.

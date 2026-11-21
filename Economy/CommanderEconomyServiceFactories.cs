@@ -10,7 +10,7 @@ internal sealed partial class CommanderEconomyService
     private static readonly Comparer<UnitDefinition> AircraftProductOrder = Comparer<UnitDefinition>.Create(CompareAircraftProducts);
 
     /// <summary>
-    /// What a factory may make: <paramref name="hq"/>'s own ground roster, then every aircraft the
+    /// What a factory may make: the faction's ground roster, or with LimitToFactoryVehicles on the depot's faction list, then every aircraft the
     /// encyclopedia holds, modded ones included, helicopters before aeroplanes and cheapest first,
     /// then every ship the NAVAL window sells. Aircraft and ships are not filtered by faction, the
     /// same as the AIR window with no hangar picked and the NAVAL window.
@@ -21,14 +21,36 @@ internal sealed partial class CommanderEconomyService
     internal static void CollectFactoryProducts(List<UnitDefinition> into, FactionHQ? hq)
     {
         into.Clear();
-        CommanderGameAccess.CollectFactionVehicleDefinitions(FactoryVehicleScratch, hq);
+        if (hq?.faction == null || Encyclopedia.Lookup == null)
+        {
+            return;
+        }
+
+        // Option on: the depot's own faction list. Off: the faction's convoy roster, as before.
+        if (CommanderSettings.LimitToFactoryVehicles)
+        {
+            CommanderGameAccess.TryGetLocalVehicleDefinitions(FactoryVehicleScratch);
+        }
+        else
+        {
+            CommanderGameAccess.CollectFactionVehicleDefinitions(FactoryVehicleScratch, hq);
+        }
+
         for (int i = 0; i < FactoryVehicleScratch.Count; i++)
         {
-            into.Add(FactoryVehicleScratch[i]);
+            VehicleDefinition definition = FactoryVehicleScratch[i];
+            if (!string.IsNullOrEmpty(definition.jsonKey)
+                && Encyclopedia.Lookup.TryGetValue(definition.jsonKey, out UnitDefinition listed)
+                && ReferenceEquals(listed, definition)
+                && !CommanderUnitBanService.IsBanned(definition)
+                && CommanderFactionVehicleService.CanPurchase(definition, hq))
+            {
+                into.Add(definition);
+            }
         }
 
         List<AircraftDefinition>? aircraft = Encyclopedia.i?.aircraft;
-        if (hq == null || aircraft == null || Encyclopedia.Lookup == null)
+        if (aircraft == null)
         {
             return;
         }

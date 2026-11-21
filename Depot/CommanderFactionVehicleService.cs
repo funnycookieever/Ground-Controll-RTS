@@ -5,7 +5,7 @@ namespace GroundControlRts;
 
 internal sealed class CommanderFactionVehicleService : ICommanderResetSession
 {
-    /// <summary>VehicleDefinition.jsonKey to factionTag, or SHARED. Add new vehicles here.</summary>
+    /// <summary>VehicleDefinition.jsonKey to factionTag, or SHARED. Vehicle faction definitions for depots and factories.</summary>
     private static readonly Dictionary<string, string> VehicleFactions = new(StringComparer.OrdinalIgnoreCase)
     {
         ["AFV8_APC"] = "BDF",
@@ -127,9 +127,13 @@ internal sealed class CommanderFactionVehicleService : ICommanderResetSession
             return false;
         }
 
-        return VehicleFactions.TryGetValue(definition.jsonKey, out string allocation)
-            && (allocation == "SHARED"
-                || string.Equals(allocation, hq.faction.factionTag, StringComparison.OrdinalIgnoreCase));
+        if (VehicleFactions.TryGetValue(definition.jsonKey, out string allocation))
+        {
+            return allocation == "SHARED"
+                || string.Equals(allocation, hq.faction.factionTag, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     internal static bool CanAcquire(VehicleDefinition definition, FactionHQ? hq, out string reason)
