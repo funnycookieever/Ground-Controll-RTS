@@ -18,12 +18,6 @@ internal sealed class CommanderLog
     }
 
     [Conditional("GC_LOGS")]
-    internal void LogDebug(object data)
-    {
-        source.LogDebug(data);
-    }
-
-    [Conditional("GC_LOGS")]
     internal void LogInfo(object data)
     {
         source.LogInfo(data);

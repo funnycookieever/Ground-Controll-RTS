@@ -18,6 +18,8 @@ internal sealed partial class CommanderEnemyCommanderService
 
     private const int BoltstrikesPerBase = 2;
 
+    private const int LadsPerBase = 4;
+
     private const int MaxPiledriverBoltstrikes = 12;
 
     /// <summary>Two depots field about three vehicles a minute, so more a review only fills the reserve.</summary>
@@ -29,6 +31,12 @@ internal sealed partial class CommanderEnemyCommanderService
 
     private static readonly HarmonyLib.AccessTools.FieldRef<MissileSeeker, Missile> LaunchedMissile =
         HarmonyLib.AccessTools.FieldRefAccess<MissileSeeker, Missile>("missile");
+
+    /// <summary>A LADS outside the ring's air quota. Under a unit cap it counts, so the cap holds.</summary>
+    internal static bool IsExtraLads(Unit unit)
+    {
+        return !CommanderUnitCap.Enabled && unit.definition.unitName == LadsName;
+    }
 
     /// <summary>
     /// Off the <c>BallisticMissileGuidance.Initialize</c> postfix, host side. Every ballistic round

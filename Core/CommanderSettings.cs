@@ -31,6 +31,10 @@ internal static class CommanderSettings
     // Off by default. Enemy units are not drawn until seen: see CommanderFogOfWarService.
     internal static bool FogOfWar { get => CommanderMapSettings.OverrideBool(CommanderMapSettings.FogOfWarPrefix) ?? Get("Gameplay", "FogOfWar", false); set => Set("Gameplay", "FogOfWar", value); }
 
+    // Off by default. On, no base changes hands: the capture bar never moves, the player gets no
+    // capture orders and the AI commanders only attack and defend.
+    internal static bool DisableCapture { get => CommanderMapSettings.OverrideBool(CommanderMapSettings.CaptureOffPrefix) ?? Get("Gameplay", "DisableCapture", false); set => Set("Gameplay", "DisableCapture", value); }
+
     internal static bool DisableFriendlyAi { get => CommanderMapSettings.OverrideBool(CommanderMapSettings.FriendlyAiOffPrefix) ?? Get("Gameplay", "DisableFriendlyAi", false); set => Set("Gameplay", "DisableFriendlyAi", value); }
 
     // Off by default. One cap per side, both sides: see CommanderUnitCap.
@@ -221,6 +225,9 @@ internal static class CommanderSettings
 
     /// <summary>GOD DIFFICULTY on every Champions match, not only one with a 10 B budget.</summary>
     internal static bool ForceGodDifficulty { get => Get("Gameplay", "ForceGodDifficulty", false); set => Set("Gameplay", "ForceGodDifficulty", value); }
+
+    /// <summary>The Leviathan as a scaled sea creature instead of a giant made of seawater.</summary>
+    internal static bool LeviathanFlesh { get => Get("Gameplay", "LeviathanFlesh", false); set => Set("Gameplay", "LeviathanFlesh", value); }
 
     // Economy prices are mission-relative: faction balances are authored per mission (about 1000
     // at the start of Escalation), so these are knobs, not constants.
@@ -527,6 +534,7 @@ internal static class CommanderSettings
         _ = TacticalMapSize;
         _ = MapDragSpeed;
         _ = MapZoomSpeed;
+        _ = LeviathanFlesh;
         _ = AutoFrameSelection;
         _ = CameraPanSpeed;
         _ = CameraZoomSpeed;
@@ -565,6 +573,7 @@ internal static class CommanderSettings
         _ = MobileArtilleryCost;
         _ = AircraftCaptureStrength;
         _ = FogOfWar;
+        _ = DisableCapture;
         _ = CaptureRecoveryPerSecond;
         _ = SupplyFuelCapacityKg;
         _ = StartingFuelKg;

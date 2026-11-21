@@ -188,6 +188,11 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
     private readonly List<(Airbase Staging, int Slot)> staleDrives = new();
     private readonly List<Airbase> stagingBases = new();
 
+    /// <summary>Per AI commander, the held bases with a drive still short of units: a walk-in at the
+    /// neutral or enemy base next along that has not filled its squad, or the main effort. Rebuilt
+    /// every review.</summary>
+    private readonly Dictionary<FactionHQ, HashSet<Airbase>> frontBases = new();
+
     /// <summary>Captures already logged this review; several drives can be aimed at one base.</summary>
     private readonly HashSet<Airbase> announcedCaptures = new();
     private readonly List<Unit> squad = new();
@@ -245,6 +250,7 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         targets.Clear();
         drives.Clear();
         staleDrives.Clear();
+        frontBases.Clear();
         squad.Clear();
         squadDistances.Clear();
         claimed.Clear();
@@ -436,7 +442,7 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         bool neutralLeft = false;
         foreach (KeyValuePair<string, Airbase> own in FactionRegistry.airbaseLookup)
         {
-            neutralLeft |= own.Value != null && IsTakeable(own.Value, hq) && own.Value.CurrentHQ == null;
+            neutralLeft |= own.Value != null && IsTakeable(own.Value, hq) && own.Value.CurrentHQ == null && !CommanderSettings.DisableCapture;
             if (own.Value == null || !ReferenceEquals(own.Value.CurrentHQ, hq) || own.Value.center == null)
             {
                 continue;
@@ -533,7 +539,7 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
     {
         target = default;
         FactionHQ? localHq = CommanderGameAccess.GetLocalHq();
-        if (localHq == null)
+        if (localHq == null || CommanderSettings.DisableCapture)
         {
             return false;
         }
@@ -699,6 +705,27 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         return any;
     }
 
+    /// <summary>The bases <paramref name="hq"/>'s pushes are attacking that <paramref name="enemy"/>
+    /// holds. Its artillery shells these.</summary>
+    internal void CollectAttackedBases(FactionHQ hq, FactionHQ enemy, List<Airbase> into)
+    {
+        into.Clear();
+        foreach (KeyValuePair<(Airbase Staging, int Slot), EnemyDrive> entry in drives)
+        {
+            Airbase? target = entry.Value.Target;
+            if (entry.Key.Staging != null
+                && ReferenceEquals(entry.Key.Staging.CurrentHQ, hq)
+                && target != null
+                && !target.disabled
+                && target.center != null
+                && ReferenceEquals(target.CurrentHQ, enemy)
+                && !into.Contains(target))
+            {
+                into.Add(target);
+            }
+        }
+    }
+
     /// <summary>True when an enemy push has already sent this unit at a base. The home guard asks,
     /// so it does not drag an attacker back down the road it just drove up.</summary>
     internal bool IsOnEnemyDrive(Unit unit)
@@ -712,6 +739,39 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// True for a depot at a base of <paramref name="hq"/>'s with no drive short of units: a convoy
+    /// from it only drives through friendly ground to reach the front. False while no front is known
+    /// (first review, or nothing left to take), so nothing is held for ever.
+    /// </summary>
+    internal bool IsRearDepot(FactionHQ hq, VehicleDepot depot)
+    {
+        if (!frontBases.TryGetValue(hq, out HashSet<Airbase> front) || front.Count == 0)
+        {
+            return false;
+        }
+
+        GlobalPosition at = depot.transform.GlobalPosition();
+        Airbase? home = null;
+        float best = float.MaxValue;
+        foreach (Airbase airbase in hq.GetAirbases())
+        {
+            if (airbase == null || airbase.disabled || airbase.center == null)
+            {
+                continue;
+            }
+
+            float distance = FastMath.Distance(at, airbase.center.GlobalPosition());
+            if (distance < best)
+            {
+                best = distance;
+                home = airbase;
+            }
+        }
+
+        return home != null && !front.Contains(home);
     }
 
     /// <summary>Pushes this commander has on the road, i.e. with a target and a squad.</summary>
@@ -1169,7 +1229,7 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
     {
         targets.Clear();
         FactionHQ? localHq = CommanderGameAccess.GetLocalHq();
-        if (localHq == null)
+        if (localHq == null || CommanderSettings.DisableCapture)
         {
             return;
         }
@@ -1384,6 +1444,14 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
                 }
             }
 
+            // Refilled by ReviewEnemyBase: a base is on the front while one of its drives is short.
+            if (!frontBases.TryGetValue(hq, out HashSet<Airbase> front))
+            {
+                front = new HashSet<Airbase>();
+                frontBases[hq] = front;
+            }
+
+            front.Clear();
             int slots = stagingBases.Count == 0 ? 0 : (MinEnemyDrives + stagingBases.Count - 1) / stagingBases.Count;
             for (int i = 0; i < stagingBases.Count; i++)
             {
@@ -1465,11 +1533,22 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         int squadSize = lastBase || mainEffort
             ? int.MaxValue
             : drive.Target.CurrentHQ != null ? EnemyAssaultSquadSize : EnemySquadSize;
-        CollectCaptureSquad(hq, staging.center.GlobalPosition(), squadSize, drive.Committed, anyFighter: mainEffort);
+
+        // With capture off a drive is only an attack, so anything that fights will do.
+        bool attackOnly = mainEffort || CommanderSettings.DisableCapture;
+        CollectCaptureSquad(
+            hq, staging.center.GlobalPosition(), squadSize, drive.Committed, anyFighter: attackOnly, localOnly: !lastBase && !mainEffort);
+
+        // New assault vehicles roll out only where a drive still wants them (HoldsConvoyAtRear): a
+        // base whose walk-in is full spawned for the main effort and drove it across held ground.
+        if (squad.Count < squadSize && frontBases.TryGetValue(hq, out HashSet<Airbase> front))
+        {
+            front.Add(staging);
+        }
 
         // No unit that can take ground is the one thing that stops an expansion dead, so it is the
         // one thing the unit spender is told about.
-        drive.WantsCaptureUnit = squad.Count == 0;
+        drive.WantsCaptureUnit = squad.Count == 0 && !CommanderSettings.DisableCapture;
         if (squad.Count == 0)
         {
             return;
@@ -1777,7 +1856,8 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
             // time; passing over a taken one sent the spare drives at the next enemy base along.
             if (!IsTakeable(airbase, hq)
                 || (skipTaken && airbase.CurrentHQ == null && IsDriveTarget(airbase))
-                || (neutralOnly && airbase.CurrentHQ != null))
+                || (neutralOnly && airbase.CurrentHQ != null)
+                || (CommanderSettings.DisableCapture && airbase.CurrentHQ == null))
             {
                 continue;
             }
@@ -1788,7 +1868,15 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
                 continue;
             }
 
-            float score = ScoreTarget(airbase.CurrentHQ != null, GetRoadMeters(staging, airbase));
+            // The held base nearest it by road attacks it: a base taken further along is where the
+            // next push starts, not a stop on the road from home.
+            float road = GetRoadMeters(staging, airbase);
+            if (HasNearerStaging(staging, airbase, road))
+            {
+                continue;
+            }
+
+            float score = ScoreTarget(airbase.CurrentHQ != null, road);
             if (score < bestScore)
             {
                 bestScore = score;
@@ -1818,7 +1906,8 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
     /// first, then the nearest to <paramref name="from"/> that no other drive has taken this review.
     /// Committed units come first so the squad is not re-picked (and released mid-march) every review.
     /// </summary>
-    private void CollectCaptureSquad(FactionHQ hq, GlobalPosition from, int limit, List<Unit> committed, bool anyFighter = false)
+    private void CollectCaptureSquad(
+        FactionHQ hq, GlobalPosition from, int limit, List<Unit> committed, bool anyFighter = false, bool localOnly = false)
     {
         squad.Clear();
         squadDistances.Clear();
@@ -1858,6 +1947,14 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
             }
 
             float distance = FastMath.Distance(unit.transform.GlobalPosition(), from);
+
+            // A base's drive only takes what stands nearer it than any other base held; home's own
+            // drive gets the rest.
+            if (localOnly && IsNearerOtherBase(unit.transform.GlobalPosition(), distance))
+            {
+                continue;
+            }
+
             int at = NearestInsertIndex(squadDistances, distance, room);
             if (at < 0)
             {
@@ -1879,6 +1976,40 @@ internal sealed class CommanderCaptureService : ICommanderTickPersistent, IComma
         }
 
         AddConvoyAirDefence(hq, from, committed);
+    }
+
+    /// <summary>Another of <see cref="stagingBases"/> that can drive to <paramref name="target"/> on a
+    /// shorter road than <paramref name="road"/>, the road from <paramref name="staging"/>.</summary>
+    private bool HasNearerStaging(Airbase staging, Airbase target, float road)
+    {
+        GlobalPosition at = target.center.GlobalPosition();
+        for (int i = 0; i < stagingBases.Count; i++)
+        {
+            Airbase other = stagingBases[i];
+            if (!ReferenceEquals(other, staging)
+                && GetRoadMeters(other, target) < road
+                && CommanderEnemyCommanderService.CanDriveBetween(other.center.GlobalPosition(), at))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>True when one of <see cref="stagingBases"/> is nearer <paramref name="at"/> than
+    /// <paramref name="distance"/>, the distance to the drive's own base.</summary>
+    private bool IsNearerOtherBase(GlobalPosition at, float distance)
+    {
+        for (int i = 0; i < stagingBases.Count; i++)
+        {
+            if (FastMath.Distance(at, stagingBases[i].center.GlobalPosition()) < distance - 1f)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

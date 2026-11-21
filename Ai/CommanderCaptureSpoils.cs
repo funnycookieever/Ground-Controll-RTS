@@ -32,6 +32,12 @@ internal static class CommanderCaptureSpoils
     /// </summary>
     internal static void HandOver(Airbase airbase, FactionHQ? previous)
     {
+        if (airbase.IsServer && airbase.CurrentHQ == null)
+        {
+            ReleaseToNeutral(airbase);
+            return;
+        }
+
         // Unity's overloaded == does not narrow nullability, hence the patterns.
         if (!airbase.IsServer || airbase.CurrentHQ is not FactionHQ winner || airbase.center is not Transform centerTransform)
         {
@@ -119,6 +125,22 @@ internal static class CommanderCaptureSpoils
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// <c>Airbase.CaptureFaction(null)</c> returns before it re-owns the buildings, so a base
+    /// knocked down to neutral would keep its hangars on the old side. A neutral base's buildings
+    /// are unowned at mission start, so that is what they go back to.
+    /// </summary>
+    private static void ReleaseToNeutral(Airbase airbase)
+    {
+        foreach (Building building in airbase.buildings)
+        {
+            if (building != null)
+            {
+                building.NetworkHQ = null;
+            }
+        }
     }
 
     private static void MoveDepot(VehicleDepot depot, FactionHQ winner)

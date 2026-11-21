@@ -148,10 +148,12 @@ internal sealed partial class CommanderEnemyCommanderService
         return state;
     }
 
-    /// <summary>10 s defence clock: order more launchers, and aim the ones on the field.</summary>
+    /// <summary>10 s defence clock: order more launchers, and aim the ones on the field. The god's
+    /// are free; any other commander buys one only when its uranium stockpile covers the warheads,
+    /// and the depot's uranium gate charges them as for the player.</summary>
     private void ReviewGodNukes(FactionHQ hq, FactionHQ localHq, CommanderState state)
     {
-        if (!state.NuclearArmed || hq.factionUnits == null)
+        if (hq.factionUnits == null)
         {
             return;
         }
@@ -191,8 +193,12 @@ internal sealed partial class CommanderEnemyCommanderService
             if (CommanderAreaFire.TryBeginForAi(launcher, aim, NuclearAreaRadiusMeters))
             {
                 CommanderPlugin.Log.LogInfo(
-                    $"GOD DIFFICULTY: {CommanderGameAccess.GetUnitLabel(launcher)} raises its launcher against {CommanderCaptureService.GetAirbaseLabel(target)}.");
-                CommanderGodService.NotifyNuclearLaunch(CommanderCaptureService.GetAirbaseLabel(target));
+                    $"Enemy commander ({hq.faction.name}): {CommanderGameAccess.GetUnitLabel(launcher)} raises its nuclear launcher against {CommanderCaptureService.GetAirbaseLabel(target)}.");
+                if (state.NuclearArmed)
+                {
+                    CommanderGodService.NotifyNuclearLaunch(CommanderCaptureService.GetAirbaseLabel(target));
+                }
+
                 continue;
             }
 
@@ -211,7 +217,8 @@ internal sealed partial class CommanderEnemyCommanderService
             HoldAt(launcher, spot);
         }
 
-        if (Time.time < state.NextLauncherBuyAt)
+        // Cheap before the prefab walk: a commander without the god's gift needs uranium in store.
+        if (Time.time < state.NextLauncherBuyAt || (!state.NuclearArmed && hq.GetWarheadStockpile() <= 0))
         {
             return;
         }
@@ -220,16 +227,21 @@ internal sealed partial class CommanderEnemyCommanderService
         VehicleDefinition? launcherType = ChooseNuclearLauncher();
         if (launcherType == null)
         {
-            CommanderPlugin.Log.LogWarning("GOD DIFFICULTY: no nuclear ground launcher exists in this game, so the god has none.");
+            CommanderPlugin.Log.LogWarning("No nuclear ground launcher exists in this game, so no AI commander fields one.");
             return;
         }
 
-        if (loaded + hq.GetUnitSupply(launcherType) >= MaxGodLaunchers || !CommanderGameAccess.TrySpend(hq, launcherType.value))
+        // Reserve launchers waiting at the depot draw on the same stockpile when they roll out.
+        int waiting = hq.GetUnitSupply(launcherType);
+        if (loaded + waiting >= MaxGodLaunchers
+            || (!state.NuclearArmed
+                && hq.GetWarheadStockpile() < CommanderFactionVehicleService.GetWarheadCost(launcherType) * (waiting + 1))
+            || !CommanderGameAccess.TrySpend(hq, launcherType.value))
         {
             return;
         }
 
         hq.ModifyUnitSupply(launcherType, 1);
-        CommanderPlugin.Log.LogInfo($"GOD DIFFICULTY: {hq.faction.name} orders a {CommanderGameAccess.GetVehicleLabel(launcherType)}.");
+        CommanderPlugin.Log.LogInfo($"Enemy commander ({hq.faction.name}) orders a {CommanderGameAccess.GetVehicleLabel(launcherType)}.");
     }
 }

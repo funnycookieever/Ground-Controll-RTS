@@ -44,6 +44,16 @@ internal sealed partial class CommanderEnemyCommanderService
     /// <summary>Bases the reviewing commander holds, read with the owned vehicles.</summary>
     private int ownedBases;
 
+    /// <summary>A base of the reviewing commander's that can field air defence is below its own
+    /// ring quota, read with the owned vehicles.</summary>
+    private bool reviewAirShort;
+
+    /// <summary>A SAM site of the reviewing commander's that can be fielded wants a launcher.</summary>
+    private bool reviewSamWanted;
+
+    /// <summary>A base of the reviewing commander's is short of its LADS, which sit beside the ring quota.</summary>
+    private bool reviewLadsWanted;
+
     /// <summary>The reviewing commander is still short of a LADS and a CRAM per base.</summary>
     private bool ringGunsFirst;
 
@@ -91,27 +101,30 @@ internal sealed partial class CommanderEnemyCommanderService
     }
 
     /// <summary>
-    /// Under a unit cap an AI side stops buying air defence at <see cref="CommanderUnitCap.AirDefenceCap"/>
-    /// (escorts included), so the guard does not eat the army's slots.
+    /// Whether this air-defence vehicle is past its limit. Base defence is limited per base, never
+    /// for the faction as a whole: the ring guns (LADS, CRAM, SPAAGs, Boltstrikes) while some base
+    /// with a depot is below its own ring quota, StratoLances while some site at a base that can
+    /// field one has room.
+    /// Convoy air defence is not base defence and keeps the faction share.
     /// </summary>
     private bool IsAirDefenceFull(VehicleDefinition definition)
     {
-        return IsAirDefence(definition) && (IsAirDefenceShareFull() || IsAirDefenceAtMax());
+        return IsAirDefence(definition)
+            && (IsConvoyAirDefence(definition) ? IsAirDefenceShareFull()
+                : IsSamSiteLauncher(definition) ? !reviewSamWanted
+                : !CommanderUnitCap.Enabled && definition.unitName == LadsName ? !reviewLadsWanted
+                : !reviewAirShort);
     }
 
-    /// <summary>
-    /// <see cref="AirDefendersPerBase"/> is a ceiling, radar SAMs and counter-battery mounts included.
-    /// Launchers ride on top of the ring's own count, so as a target it was never met.
-    /// </summary>
+    /// <summary>No base wants air defence of any kind: every ring at its quota and every site full.</summary>
     private bool IsAirDefenceAtMax()
     {
-        return CountOwnedAirDefence() >= Mathf.Max(1, ownedBases) * AirDefendersPerBase;
+        return !reviewAirShort && !reviewSamWanted && !reviewLadsWanted;
     }
 
     /// <summary>
-    /// Capped: the cap's air-defence slots. Uncapped: a share of the fighting vehicles, since the home
-    /// guard otherwise forces one launcher a review per base. The floor keeps the first launchers
-    /// coming before there is an army to share.
+    /// The convoys' air defence. Capped: the cap's air-defence slots. Uncapped: a share of the
+    /// fighting vehicles. The floor keeps the first escorts coming before there is an army to share.
     /// </summary>
     private bool IsAirDefenceShareFull()
     {

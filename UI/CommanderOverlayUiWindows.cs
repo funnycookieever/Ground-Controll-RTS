@@ -262,12 +262,13 @@ internal sealed partial class CommanderOverlayUi
         {
             GUI.enabled = oldEnabled && friendly;
             bool nearest = repairService.UsesNearestTarget(focusedUnit);
+            bool off = repairService.IsRepairOff(focusedUnit);
             if (GUI.Button(
                 new Rect(12f, y, radarWindowRect.width - 24f, 36f),
-                nearest ? "REPAIR: NEAREST" : "REPAIR: PRIORITY",
-                nearest ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+                off ? "REPAIR: OFF" : nearest ? "REPAIR: NEAREST" : "REPAIR: PRIORITY",
+                nearest || off ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
             {
-                repairService.ToggleNearestTarget(focusedUnit);
+                repairService.CycleRepairMode(focusedUnit);
             }
 
             y += 40f;

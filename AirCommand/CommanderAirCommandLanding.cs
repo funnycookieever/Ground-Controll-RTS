@@ -86,6 +86,13 @@ internal sealed partial class CommanderAirCommandService
     /// <summary>How long an AI side's aeroplane waits on a stand for stock before going to reserve.</summary>
     private const float AiGroundedReserveSeconds = 60f;
 
+    /// <summary>
+    /// A helicopter that has hovered "waiting to land" over an occupied pad for this long goes to
+    /// reserve. The base game resets its stuck timer every frame it waits, so with something parked
+    /// on the only pad (a vehicle, a dead airframe) it would hover there for good.
+    /// </summary>
+    private const float HeloPadWaitGiveUpSeconds = 90f;
+
     /// <summary>Fraction of an aircraft's parts detached or destroyed before it counts as a wreck. The
     /// base game's own figure, used by <c>AIPilotCombatModes</c> and <c>AIPilotLandingState</c> to give up.</summary>
     private const float WreckedDetachedRatio = 0.12f;
@@ -124,6 +131,9 @@ internal sealed partial class CommanderAirCommandService
 
     /// <summary>Stands the taxi network does not lead to (see <c>RouteLandedTaxi</c>).</summary>
     private static readonly HashSet<Transform> UnreachableStands = new();
+
+    /// <summary>When each AI helicopter started hovering "waiting to land".</summary>
+    private static readonly Dictionary<Aircraft, float> HeloPadWaitSince = new();
 
     private static readonly AccessTools.FieldRef<Airbase, Transform[]?> ServicePointsRef =
         AccessTools.FieldRefAccess<Airbase, Transform[]?>("servicePoints");
@@ -436,6 +446,45 @@ internal sealed partial class CommanderAirCommandService
     /// more than 10 m above or below the pad is flying over it or on another level.</summary>
     internal static bool IsPadPhysicallyOccupied(Vector3 pad, Aircraft querier)
     {
+        return FindPadBlocker(pad, querier) != null;
+    }
+
+    /// <summary>From the postfix on <c>AIHeloLandingState.FixedUpdateState</c>.</summary>
+    internal static void TickHeloPadWait(AIHeloLandingState state, Aircraft? aircraft, Vector3? pad)
+    {
+        if (aircraft == null)
+        {
+            return;
+        }
+
+        if (state.stateDisplayName != "waiting to land" || aircraft.Player != null || aircraft.disabled)
+        {
+            HeloPadWaitSince.Remove(aircraft);
+            return;
+        }
+
+        if (!HeloPadWaitSince.TryGetValue(aircraft, out float since))
+        {
+            HeloPadWaitSince[aircraft] = Time.time;
+            return;
+        }
+
+        if (Time.time - since < HeloPadWaitGiveUpSeconds)
+        {
+            return;
+        }
+
+        HeloPadWaitSince.Remove(aircraft);
+        Unit? blocker = pad == null ? null : FindPadBlocker(pad.Value, aircraft);
+        CommanderPlugin.Log.LogInfo(
+            $"{CommanderGameAccess.GetUnitLabel(aircraft)} hovered {HeloPadWaitGiveUpSeconds:0} s waiting for its pad "
+                + $"(blocked by {(blocker == null ? "the landing queue" : CommanderGameAccess.GetUnitLabel(blocker))}); returned to stock.");
+        aircraft.ReturnToInventory();
+    }
+
+    /// <summary>What <see cref="IsPadPhysicallyOccupied"/> found on the pad, or null.</summary>
+    internal static Unit? FindPadBlocker(Vector3 pad, Aircraft querier)
+    {
         List<Unit> units = UnitRegistry.allUnits;
         for (int i = 0; i < units.Count; i++)
         {
@@ -452,11 +501,11 @@ internal sealed partial class CommanderAirCommandService
             float reach = querier.maxRadius + other.maxRadius + 3f;
             if (Mathf.Abs(offset.y) < 10f && (offset.x * offset.x) + (offset.z * offset.z) < reach * reach)
             {
-                return true;
+                return other;
             }
         }
 
-        return false;
+        return null;
     }
 
     /// <summary>Takes a stand out of the claims for good: no taxiway leads to it.</summary>
@@ -470,6 +519,7 @@ internal sealed partial class CommanderAirCommandService
     internal static void ResetServiceStands()
     {
         StandClaims.Clear();
+        HeloPadWaitSince.Clear();
         StandScratch.Clear();
         UnreachableStands.Clear();
         LandedForService.Clear();
@@ -732,6 +782,7 @@ internal sealed partial class CommanderAirCommandService
     internal bool TrySetAiCaptureLanding(Aircraft aircraft, Airbase airbase)
     {
         if (aircraft == null
+            || CommanderSettings.DisableCapture
             || aircraft.disabled
             || aircraft.Player != null
             || airbase == null

@@ -622,6 +622,12 @@ internal sealed class CommanderNetwork : ICommanderTickPersistent
             return null;
         }
 
+        // The Shield Generator is a mod-made copy, in no encyclopedia list.
+        if (key == CommanderLeviathanShieldService.GeneratorKey)
+        {
+            return CommanderLeviathanShieldService.GeneratorDefinition as T;
+        }
+
         if (Encyclopedia.Lookup != null && Encyclopedia.Lookup.TryGetValue(key, out UnitDefinition found) && found is T typed)
         {
             return typed;
@@ -806,8 +812,6 @@ internal sealed class CommanderNetwork : ICommanderTickPersistent
         SplitByBytes(text, MaxMessageBytes - 80, PieceScratch);
         string id = nextPieceId++.ToString(CultureInfo.InvariantCulture);
         string total = PieceScratch.Count.ToString(CultureInfo.InvariantCulture);
-        CommanderPlugin.Log.LogDebug(
-            $"Sync payload of {Encoding.UTF8.GetByteCount(text)} bytes sent as {PieceScratch.Count} pieces.");
         for (int i = 0; i < PieceScratch.Count; i++)
         {
             send(Join(PieceVerb, new[] { id, i.ToString(CultureInfo.InvariantCulture), total, PieceScratch[i] }));

@@ -86,7 +86,7 @@ internal sealed class CommanderFogOfWarService : ICommanderTickPersistent, IComm
         }
 
         // A unit that left the registry (despawned) is dropped without touching it.
-        // ponytail: a destroyed light's mask entry stays until ResetSession; prune here if matches run very long.
+        // A destroyed light's mask entry stays until ResetSession; prune here if matches run very long.
         Hidden.RemoveWhere(unit => unit == null);
     }
 
@@ -172,7 +172,7 @@ internal sealed class CommanderFogOfWarService : ICommanderTickPersistent, IComm
             UnitPart part = parts[i];
             if (part != null && !part.transform.IsChildOf(unit.transform))
             {
-                // ponytail: a part under another detached part is walked twice; harmless, the writes repeat.
+                // A part under another detached part is walked twice; harmless, the writes repeat.
                 SetTreeHidden(part.transform, hide);
             }
         }

@@ -244,6 +244,13 @@ internal static class CommanderMissionSettingsPatches
             refreshers,
             forces,
             toggleTemplate,
+            "Capture off: bases never change hands",
+            () => Read(__instance, CommanderMapSettings.CaptureOffPrefix, CommanderSettings.DisableCapture ? 1 : 0) != 0,
+            value => Write(__instance, CommanderMapSettings.CaptureOffPrefix, value ? 1 : 0));
+        AddToggle(
+            refreshers,
+            forces,
+            toggleTemplate,
             "Unit ban vote before the match",
             () => Read(__instance, CommanderMapSettings.BanVotePrefix, CommanderSettings.UnitBansEnabled ? 1 : 0) != 0,
             value => Write(__instance, CommanderMapSettings.BanVotePrefix, value ? 1 : 0));

@@ -84,9 +84,10 @@ internal sealed partial class CommanderEconomyService
     }
 
     /// <summary>
-    /// The enemy's one enrichment plant, late and rich only: an income of
+    /// The enemy's enrichment plants, late and rich only: an income of
     /// <see cref="EnemyEnrichmentIncomePerMinute"/>, warhead storage at a held base (or every batch is
-    /// thrown away), a land home base to put it beside, and none built or queued yet. Its warheads are
+    /// thrown away), a land home base to put it beside, and fewer built or queued than
+    /// the mission clock allows (1 to 4). Its warheads are
     /// what let a strike buy roll GPO-N. The price, 0 when the rung is closed, so the reserve and the
     /// build ask the same question.
     /// </summary>
@@ -109,9 +110,13 @@ internal sealed partial class CommanderEconomyService
             return NoteEnrichmentGate(hq, "no land home base");
         }
 
-        if (CountEnrichmentPlants(hq) > 0)
+        // One plant, then another every 12 minutes past minute 20, up to four (2 at 32 min, 3 at 44, 4 at 56).
+        MissionManager? manager = NetworkSceneSingleton<MissionManager>.i;
+        float minutes = manager == null ? 0f : manager.MissionTime / 60f;
+        int wanted = Mathf.Clamp(1 + Mathf.FloorToInt((minutes - 20f) / 12f), 1, 4);
+        if (CountEnrichmentPlants(hq) >= wanted)
         {
-            return NoteEnrichmentGate(hq, "has one");
+            return NoteEnrichmentGate(hq, $"has {wanted}");
         }
 
         int stores = 0;

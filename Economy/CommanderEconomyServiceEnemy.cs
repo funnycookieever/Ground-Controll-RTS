@@ -76,10 +76,19 @@ internal sealed partial class CommanderEconomyService
     /// <summary>How near a base a vehicle depot has to be to count as that base's depot.</summary>
     private const float DepotCoverageMeters = 3000f;
 
+    /// <summary>Vehicle depots a commander wants at every base it holds: one door for the convoys and
+    /// one for the base's guard, so a captured base fields both instead of waiting on home.</summary>
+    private const int EnemyDepotsPerBase = 2;
+
     /// <summary>Reviews a commander may fail to site a depot before it stops saving up for one.
     /// A base whose ground refuses a depot must not hold a review's funds hostage all match - the
     /// same escape the naval dock has when the map gave the commander no coast.</summary>
     private const int EnemyDepotSiteGiveUp = 5;
+
+    /// <summary>How long a commander that gave up on depot sites waits before it tries again:
+    /// blueprints going up beside a base take its roadside, and once they stand there is room
+    /// again.</summary>
+    private const float EnemyDepotSiteRetrySeconds = 180f;
 
     /// <summary>Darts thrown for a depot site. More than an ordinary building gets: a depot needs a
     /// road and an exit that is not a hillside, so most sites near a base are refused.</summary>
@@ -93,6 +102,9 @@ internal sealed partial class CommanderEconomyService
     /// far enough not to be on the apron.</summary>
     private const float BaseSiteMinMeters = 200f;
     private const float BaseSiteMaxMeters = 900f;
+
+    /// <summary>Roadside reach for a depot sited at the base's builder rather than its centre.</summary>
+    private const float BuilderDepotMaxMeters = 400f;
 
     /// <summary>The mine ring, and the gap kept between mines, as shares of the build radius. Spread so
     /// one pass cannot kill them all, but kept inside the base's own air defence. Wide enough for the
@@ -142,7 +154,7 @@ internal sealed partial class CommanderEconomyService
     private static readonly System.Random MineDice = new();
 
     private readonly List<Unit> dumpScratch = new();
-    private readonly Dictionary<FactionHQ, int> depotSiteFailures = new();
+    private readonly Dictionary<FactionHQ, (int Count, float At)> depotSiteFailures = new();
 
     /// <summary>HQs already told, once, that this map gives them nowhere to put a dock.</summary>
     /// <summary>Commanders whose dock search failed, with how many bases they held then. A new base
@@ -189,7 +201,7 @@ internal sealed partial class CommanderEconomyService
     internal static float GetGodOpeningReserve(FactionHQ hq)
     {
         // Placed plants are paid for, so only the ones not yet placed are held.
-        // ponytail: priced as the next plant times the plants left; the next is the dearest new line,
+        // Priced as the next plant times the plants left; the next is the dearest new line,
         // so this over-holds a little, never under.
         return Instance != null && IsGodOpening(hq)
             ? Mathf.Max(0, GodEnemyFactoryTarget - CountFactories(hq)) * Instance.GetEnemyFactoryReserve(hq)
@@ -214,12 +226,12 @@ internal sealed partial class CommanderEconomyService
         // but the income comes before it (not the radar, the shelf or the AA post): the StratoLance
         // and every MBT are level-2 purchases, and behind the whole ladder a twelve-minute match
         // never saw one of either.
-        if (service.HasDepotUpgradeIncome(hq) && GetBestDepotLevel(hq) < 2 && service.FindEnemyDepotToUpgrade(hq) != null)
+        if (service.HasDepotUpgradeIncome(hq) && service.HasBaseWithoutUpgradedDepot(hq))
         {
             return DepotUpgradeCost;
         }
 
-        if (CountBlueprints(hq) >= GetEnemyBlueprintLimit(hq))
+        if (!HasAnyBlueprintRoom(hq))
         {
             // Those are already paid for; saving for the next while the builders work on them
             // would only starve the convoys.
@@ -239,6 +251,18 @@ internal sealed partial class CommanderEconomyService
         {
             income = true;
             return GetEnemyMineReserve(service, hq, out goldMine);
+        }
+
+        // Depots at every base straight after the first income, so a captured base fields its own
+        // guard and convoys.
+        // FactionHQ.DeployVehicles rolls the reserve out of the depot nearest the front first, so a
+        // forward depot is also what moves the convoys' start forward.
+        BuildingDefinition? depot = service.ResolveCategoryDefinition(BuildingType.DEP, preferDearest: false);
+        if (depot != null
+            && service.GetDepotSiteFailures(hq) < EnemyDepotSiteGiveUp
+            && TryGetUncoveredBase(hq, BuildingType.DEP, DepotCoverageMeters, out _, EnemyDepotsPerBase))
+        {
+            return GetStructureCost(depot);
         }
 
         // One radar, one shelf and one AA post, then income, then the same again at every other base.
@@ -301,6 +325,13 @@ internal sealed partial class CommanderEconomyService
             return GetEnemyMineReserve(service, hq, out goldMine);
         }
 
+        // Net of upkeep under the 2 B target: more income ahead of the plants, as in TryBuildEnemyEconomy.
+        if (IsBelowEnemyNetIncomeTarget(hq))
+        {
+            income = true;
+            return GetEnemyMineReserve(service, hq, out goldMine);
+        }
+
         // The opening plants straight after the home income, ahead of every per-base rung: the air
         // force comes out of them. A plant's price follows its product and the Unit Prices profile.
         float factory = CountFactories(hq) < GetEnemyFactoryTarget(hq, duel)
@@ -325,18 +356,6 @@ internal sealed partial class CommanderEconomyService
         if (enrichment > 0f)
         {
             return enrichment;
-        }
-
-        // Then a depot at every base. FactionHQ.DeployVehicles rolls the reserve out of the depots
-        // the faction owns, nearest the front first, so a commander holding seven bases and one
-        // depot started every convoy of the match from the same corner of the map and the player
-        // only ever saw an attack from one direction.
-        BuildingDefinition? depot = service.ResolveCategoryDefinition(BuildingType.DEP, preferDearest: false);
-        if (depot != null
-            && service.GetDepotSiteFailures(hq) < EnemyDepotSiteGiveUp
-            && TryGetUncoveredBase(hq, BuildingType.DEP, DepotCoverageMeters, out _))
-        {
-            return GetStructureCost(depot);
         }
 
         // Income after every base can field and arm what it buys: seven mines ahead of these left
@@ -375,7 +394,7 @@ internal sealed partial class CommanderEconomyService
         // at twice its mine target is what let the player out-earn it. The mine rung saves out of a
         // share of income (MineFund), so the army keeps the rest. Factories and the top dock level are
         // bought out of turn (GetEnemyFactoryFund, ReviewEnemy), so nothing is starved behind this.
-        // ponytail: a commander with no mine site left just parks a mine fund (at most one price).
+        // A commander with no mine site left just parks a mine fund (at most one price).
         income = true;
         return GetEnemyMineReserve(service, hq, out goldMine);
     }
@@ -417,7 +436,7 @@ internal sealed partial class CommanderEconomyService
         }
 
         // Waits its turn behind the ladder's blueprints, like any other build: one per builder.
-        if (CountBlueprints(hq) >= GetEnemyBlueprintLimit(hq))
+        if (!HasBlueprintRoomAt(hq, site))
         {
             return false;
         }
@@ -440,6 +459,25 @@ internal sealed partial class CommanderEconomyService
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// A munitions bunker beside a manned SAM site, so its launchers and guard truck restock there
+    /// instead of a base's bunker kilometres back. Placement keeps it inside the build radius. Unlike
+    /// a dump it has a BUY, so the AI top-up keeps it stocked.
+    /// </summary>
+    internal void EnsureEnemySiteBunker(FactionHQ hq, GlobalPosition site)
+    {
+        BuildingDefinition? bunker = ResolveCategoryDefinition(BuildingType.AMMO, preferDearest: true);
+        if (bunker == null
+            || HasBuildingNear(hq, BuildingType.AMMO, site, BaseSiteMaxMeters + 100f)
+            || !HasBlueprintRoomAt(hq, site)
+            || !TryFindSiteNear(hq, bunker, site, out GlobalPosition at))
+        {
+            return;
+        }
+
+        QueueEnemyBlueprint(hq, CommanderBuildKind.Structure, bunker, null, at, GetStructureCost(bunker), GetStructureLabel(bunker));
     }
 
     /// <summary>How far an ammo dump reaches to rearm a vehicle beside it, off the prefab
@@ -480,9 +518,88 @@ internal sealed partial class CommanderEconomyService
     }
 
     /// <summary>
-    /// Blueprints a commander may have waiting at once: one per builder within the build radius of a
-    /// base it holds, so every crew has its own site. At least one, or a commander that lost every
-    /// builder would never queue the blueprint that makes it buy the next.
+    /// Room for another blueprint at the base nearest <paramref name="at"/>: one per builder of that
+    /// base, at least one so a base with none still queues the blueprint that gets it one. Per base,
+    /// so blueprints stuck at one base cannot hold every slot.
+    /// </summary>
+    private static bool HasBlueprintRoomAt(FactionHQ hq, GlobalPosition at)
+    {
+        Airbase? airbase = FindNearestHeldBase(hq, at, float.MaxValue);
+        return airbase == null || HasBlueprintRoom(hq, airbase);
+    }
+
+    /// <summary>Any land base this commander holds with room for a blueprint.</summary>
+    private static bool HasAnyBlueprintRoom(FactionHQ hq)
+    {
+        foreach (Airbase airbase in hq.GetAirbases())
+        {
+            if (airbase != null && airbase.center != null && CommanderGameAccess.IsLandBase(airbase) && HasBlueprintRoom(hq, airbase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasBlueprintRoom(FactionHQ hq, Airbase airbase)
+    {
+        CommanderEconomyService? service = Instance;
+        int blueprints = 0;
+        for (int i = 0; service != null && i < service.constructionSites.Count; i++)
+        {
+            ConstructionSite site = service.constructionSites[i];
+            if (ReferenceEquals(site.Hq, hq) && FindNearestHeldBase(hq, site.Site, float.MaxValue) == airbase)
+            {
+                blueprints++;
+            }
+        }
+
+        int builders = 0;
+        float radius = CommanderSettings.BuildRadiusKm * 1000f;
+        if (hq.factionUnits != null)
+        {
+            foreach (PersistentID id in hq.factionUnits)
+            {
+                if (id.TryGetUnit(out Unit unit)
+                    && unit is GroundVehicle
+                    && !unit.disabled
+                    && CommanderRepairService.IsRepairUnit(unit)
+                    && FindNearestHeldBase(hq, unit.GlobalPosition(), radius) == airbase)
+                {
+                    builders++;
+                }
+            }
+        }
+
+        return blueprints < Mathf.Max(1, builders);
+    }
+
+    private static Airbase? FindNearestHeldBase(FactionHQ hq, GlobalPosition at, float radius)
+    {
+        Airbase? best = null;
+        float bestDistance = radius;
+        foreach (Airbase airbase in hq.GetAirbases())
+        {
+            if (airbase == null || airbase.center == null)
+            {
+                continue;
+            }
+
+            float distance = FastMath.Distance(at, airbase.center.GlobalPosition());
+            if (distance <= bestDistance)
+            {
+                bestDistance = distance;
+                best = airbase;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// How many blueprints one economy review may queue: one per builder within the build radius of
+    /// a base it holds, at least one. Whether a given base has room is <see cref="HasBlueprintRoomAt"/>.
     /// </summary>
     private static int GetEnemyBlueprintLimit(FactionHQ hq)
     {
@@ -642,16 +759,67 @@ internal sealed partial class CommanderEconomyService
         // what had the commander put a second depot down beside a bombed one. factionUnits cannot
         // see it (UnitDisabled calls RemoveFactionUnit), so the wrecks come off the game's own
         // repair list.
+        // Only while a builder is near enough to repair it; otherwise the base puts a new depot down.
         CommanderRepairService.CollectRepairable(hq, WreckScratch);
         for (int i = 0; i < WreckScratch.Count; i++)
         {
-            if (WreckScratch[i].disabled && IsBuildingOfTypeNear(WreckScratch[i], type, position, radius))
+            if (WreckScratch[i].disabled
+                && IsBuildingOfTypeNear(WreckScratch[i], type, position, radius)
+                && HasRepairUnitNear(hq, WreckScratch[i].transform.GlobalPosition()))
             {
                 count++;
             }
         }
 
         return count + CountBlueprintsNear(hq, type, position, radius);
+    }
+
+    /// <summary>The nearest free builder within the build radius of a base.</summary>
+    private static bool TryGetBuilderNear(FactionHQ hq, GlobalPosition centre, out GlobalPosition at)
+    {
+        at = default;
+        float best = CommanderSettings.BuildRadiusKm * 1000f;
+        bool found = false;
+        if (hq.factionUnits == null)
+        {
+            return false;
+        }
+
+        foreach (PersistentID id in hq.factionUnits)
+        {
+            if (id.TryGetUnit(out Unit unit)
+                && unit is GroundVehicle
+                && !unit.disabled
+                && !unit.IsSlung()
+                && CommanderRepairService.IsRepairUnit(unit)
+                && FastMath.Distance(unit.GlobalPosition(), centre) is float distance
+                && distance < best)
+            {
+                best = distance;
+                at = unit.GlobalPosition();
+                found = true;
+            }
+        }
+
+        return found;
+    }
+
+    private static bool HasRepairUnitNear(FactionHQ hq, GlobalPosition position)
+    {
+        float radius = CommanderSettings.BuildRadiusKm * 1000f;
+        foreach (PersistentID id in hq.factionUnits)
+        {
+            if (id.TryGetUnit(out Unit unit)
+                && unit is GroundVehicle
+                && !unit.disabled
+                && CommanderRepairService.IsRepairUnit(unit)
+                && FastMath.InRange(unit.GlobalPosition(), position, radius))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsBuildingOfTypeNear(Unit? unit, BuildingType type, GlobalPosition position, float radius)
@@ -975,7 +1143,7 @@ internal sealed partial class CommanderEconomyService
 
         // One blueprint per builder at home. The ladder below counts blueprints as built, so it moves on to
         // the next rung (or the next base) instead of queueing the same one again.
-        if (CountBlueprints(hq) >= GetEnemyBlueprintLimit(hq))
+        if (!HasAnyBlueprintRoom(hq))
         {
             return false;
         }
@@ -987,6 +1155,12 @@ internal sealed partial class CommanderEconomyService
 
         // The first income building before everything else, as in GetEnemyBuildReserve.
         if (CountMines(hq) == 0 && TryBuildEnemyMine(hq))
+        {
+            return true;
+        }
+
+        // Depots at every base next, as in GetEnemyBuildReserve.
+        if (GetDepotSiteFailures(hq) < EnemyDepotSiteGiveUp && TryBuildEnemyDepot(hq, EnemyDepotsPerBase))
         {
             return true;
         }
@@ -1030,6 +1204,14 @@ internal sealed partial class CommanderEconomyService
             return TryBuildEnemyMine(hq);
         }
 
+        // Ahead of the plants, whose rung returns. The
+        // plants still come out of their own fund (TryBuildFundedFactory). Not a return either, so a
+        // commander with no mine site left still builds the rungs below.
+        if (IsBelowEnemyNetIncomeTarget(hq) && TryBuildEnemyMine(hq))
+        {
+            return true;
+        }
+
         if (CountFactories(hq) < GetEnemyFactoryTarget(hq, duel) && GetEnemyFactoryReserve(hq) > 0f)
         {
             return TryBuildEnemyFactory(hq);
@@ -1041,11 +1223,6 @@ internal sealed partial class CommanderEconomyService
         }
 
         if (TryBuildEnemyEnrichment(hq))
-        {
-            return true;
-        }
-
-        if (TryBuildEnemyDepot(hq))
         {
             return true;
         }
@@ -1118,49 +1295,90 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private bool TryBuildEnemyDepot(FactionHQ hq, int perBase = 1)
     {
+        // Short of money is not a bad site.
         BuildingDefinition? depot = ResolveCategoryDefinition(BuildingType.DEP, preferDearest: false);
-        if (depot == null
-            || !TryGetUncoveredBase(hq, BuildingType.DEP, DepotCoverageMeters, out GlobalPosition anchor, perBase))
+        if (depot == null || hq.factionFunds < GetStructureCost(depot))
         {
             return false;
         }
 
-        _ = Quaternion.identity;
-        if ((!preview.TryFindRoadsideSite(
-            depot,
-            hq,
-            anchor,
-            BaseSiteMaxMeters,
-            SiteDice,
-            EnemyDepotSiteAttempts,
-            out GlobalPosition site,
-            out Quaternion facing)
-                && !TryFindSiteNear(hq, depot, anchor, out site))
-            || !QueueEnemyBlueprint(
-                hq, CommanderBuildKind.Structure, depot, null, site, GetStructureCost(depot), GetStructureLabel(depot), facing))
+        // Every base short of depots, not just the first, so one base with no ground for a depot
+        // does not hold up the rest.
+        bool wanted = false;
+        foreach (Airbase airbase in hq.GetAirbases())
+        {
+            if (!CommanderGameAccess.IsLandBase(airbase) || CommanderCaptureService.IsBeingCaptured(airbase))
+            {
+                continue;
+            }
+
+            GlobalPosition anchor = airbase.center.GlobalPosition();
+            if (CountBuildingsNear(hq, BuildingType.DEP, anchor, DepotCoverageMeters) >= perBase)
+            {
+                continue;
+            }
+
+            wanted = true;
+
+            // Beside the base's builder when it has one, so a builder flown into a captured base
+            // does not drive off across the field to its depot.
+            bool atBuilder = TryGetBuilderNear(hq, anchor, out GlobalPosition builderAt);
+            if (atBuilder)
+            {
+                anchor = builderAt;
+            }
+
+            if ((preview.TryFindRoadsideSite(
+                    depot,
+                    hq,
+                    anchor,
+                    atBuilder ? BuilderDepotMaxMeters : BaseSiteMaxMeters,
+                    SiteDice,
+                    EnemyDepotSiteAttempts,
+                    out GlobalPosition site,
+                    out Quaternion facing)
+                || TryFindSiteNear(hq, depot, anchor, out site))
+                && QueueEnemyBlueprint(
+                    hq, CommanderBuildKind.Structure, depot, null, site, GetStructureCost(depot), GetStructureLabel(depot), facing))
+            {
+                depotSiteFailures.Remove(hq);
+                return true;
+            }
+        }
+
+        if (wanted)
         {
             NoteDepotSiteFailure(hq);
-            return false;
         }
 
-        depotSiteFailures.Remove(hq);
-        return true;
+        return false;
     }
 
     private int GetDepotSiteFailures(FactionHQ hq)
     {
-        return depotSiteFailures.TryGetValue(hq, out int failures) ? failures : 0;
+        if (!depotSiteFailures.TryGetValue(hq, out (int Count, float At) failures))
+        {
+            return 0;
+        }
+
+        if (failures.Count >= EnemyDepotSiteGiveUp && Time.time - failures.At > EnemyDepotSiteRetrySeconds)
+        {
+            depotSiteFailures.Remove(hq);
+            return 0;
+        }
+
+        return failures.Count;
     }
 
     private void NoteDepotSiteFailure(FactionHQ hq)
     {
         int failures = GetDepotSiteFailures(hq) + 1;
-        depotSiteFailures[hq] = failures;
+        depotSiteFailures[hq] = (failures, Time.time);
         if (failures == EnemyDepotSiteGiveUp)
         {
             CommanderPlugin.Log.LogInfo(
-                $"Enemy commander ({hq.faction.name}) found nowhere to put a depot at its next base "
-                    + "and has stopped saving for one.");
+                $"Enemy commander ({hq.faction.name}) found nowhere to put a depot at its bases "
+                    + $"and stops saving for one for {EnemyDepotSiteRetrySeconds:0} s.");
         }
     }
 
@@ -1309,8 +1527,10 @@ internal sealed partial class CommanderEconomyService
         // until the blueprint stands builds one, maxes it, then builds the next. A free mine is rushed.
         // The god has the money for every builder to put one up at once, and so does a commander
         // holding several gold mines' worth.
+        // Short of the net income target, one per free builder, to keep up with upkeep.
         if (!HasFreeMine(hq)
             && !IsGodEconomy(hq)
+            && !IsBelowEnemyNetIncomeTarget(hq)
             && hq.factionFunds < GetIncomeCost(CommanderBuildKind.Mine, 0) * EnemyReserveMultiple
             && CountBlueprints(hq, CommanderBuildKind.FuelExchange)
                 + CountBlueprints(hq, CommanderBuildKind.GasTerminal)

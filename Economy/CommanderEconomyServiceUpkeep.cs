@@ -23,7 +23,13 @@ internal sealed partial class CommanderEconomyService
     /// <summary>The upkeep sheet's lines, in the order <see cref="GetUpkeepLine"/> numbers them.</summary>
     internal static readonly string[] UpkeepLineNames = { "Defence structures", "Air defence vehicles", "Artillery" };
 
+    /// <summary>Net income an AI commander keeps building income toward: 2 B a minute.</summary>
+    private const float EnemyNetIncomeTarget = 2000f;
+
     private readonly List<Unit> upkeepStores = new();
+
+    /// <summary>Every faction's upkeep a minute, as the last income tick billed it (host only).</summary>
+    private readonly Dictionary<FactionHQ, float> upkeepPerMinute = new();
 
     // The local faction's ledger for the readouts, rebuilt once a second rather than walking every
     // unit the faction owns on every OnGUI pass.
@@ -74,6 +80,19 @@ internal sealed partial class CommanderEconomyService
     internal static string SignedFundsLabel(float amount)
     {
         return (amount < 0f ? "-" : "+") + FundsLabel(Mathf.Abs(amount));
+    }
+
+    /// <summary>What an AI faction's income buildings pay a minute less what its defences cost to hold.</summary>
+    internal static float GetEnemyNetIncomePerMinute(FactionHQ hq)
+    {
+        return Instance == null
+            ? 0f
+            : Instance.GetIncomePerMinute(hq) - (Instance.upkeepPerMinute.TryGetValue(hq, out float upkeep) ? upkeep : 0f);
+    }
+
+    internal static bool IsBelowEnemyNetIncomeTarget(FactionHQ hq)
+    {
+        return GetEnemyNetIncomePerMinute(hq) < EnemyNetIncomeTarget;
     }
 
     /// <summary>0 an armed building, 1 an air-defence vehicle, 2 artillery. Only for a held defence.</summary>
@@ -230,6 +249,7 @@ internal sealed partial class CommanderEconomyService
         float rate = Mathf.Max(0f, CommanderSettings.DefenceUpkeepPercentPerMinute) / 100f * (IncomeIntervalSeconds / 60f);
         float rangeMeters = CommanderSettings.SupplyStoreRangeKm * 1000f;
         CommanderSupplyStoreService? stores = CommanderSupplyStoreService.Instance;
+        upkeepPerMinute.Clear();
         foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
         {
             if (hq == null || !hq.IsServer || hq.factionUnits == null)
@@ -251,6 +271,8 @@ internal sealed partial class CommanderEconomyService
                     RestockFromBase(hq, unit, stores, rangeMeters);
                 }
             }
+
+            upkeepPerMinute[hq] = rate > 0f ? upkeep / (IncomeIntervalSeconds / 60f) : 0f;
 
             // A faction that cannot pay pays what it has: going negative would lock every purchase.
             upkeep = Mathf.Min(upkeep, Mathf.Max(0f, hq.factionFunds));

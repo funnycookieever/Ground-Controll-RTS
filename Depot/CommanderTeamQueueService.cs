@@ -25,6 +25,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
     private const float ReportStaleSeconds = 10f;
     private const float LineRefreshSeconds = 1f;
     private const int EntryArgs = 3;
+    private const string AiOwner = "AI Commander";
 
     /// <summary>A queue's worth of runs, and queues per player: a guest's report has to stay small.</summary>
     private const int MaxRunsPerQueue = 12;
@@ -50,7 +51,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
 
     internal static CommanderTeamQueueService? Instance { get; private set; }
 
-    /// <summary>One line per teammate's queue, for the depot window.</summary>
+    /// <summary>One line per teammate's queue, depot or dock, for the depot and naval windows.</summary>
     internal List<string> Lines { get; } = new();
 
     /// <summary>Teammates' queued units as pictures, for the depot window's QUEUE row.</summary>
@@ -111,14 +112,14 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         return left < 0f ? left : Mathf.Max(0f, left - elapsed);
     }
 
-    private string DescribeRuns(Entry entry, VehicleDepot? depot)
+    private string DescribeRuns(Entry entry, Unit? depot)
     {
         StringBuilder text = new();
         string[] parts = entry.Runs.Split(',');
         for (int i = 0; i < parts.Length; i++)
         {
             string[] run = parts[i].Split(':');
-            VehicleDefinition? definition = CommanderNetwork.Definition<VehicleDefinition>(CommanderNetwork.Arg(run, 0));
+            UnitDefinition? definition = CommanderNetwork.Definition<UnitDefinition>(CommanderNetwork.Arg(run, 0));
             if (definition == null)
             {
                 continue;
@@ -139,10 +140,17 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         return text.ToString();
     }
 
+    /// <summary>This player's depot queues, then its naval dock queues, under one cap.</summary>
+    private void CollectOwnQueues(List<string> args)
+    {
+        spawnService.CollectOwnQueues(args, MaxQueuesPerPlayer, MaxRunsPerQueue);
+        CommanderNavalPurchaseService.Instance?.CollectOwnQueues(args, MaxQueuesPerPlayer - (args.Count / EntryArgs), MaxRunsPerQueue);
+    }
+
     private void SendReport()
     {
         scratch.Clear();
-        spawnService.CollectOwnQueues(scratch, MaxQueuesPerPlayer, MaxRunsPerQueue);
+        CollectOwnQueues(scratch);
         if (scratch.Count == 0 && !reportedQueues)
         {
             return;
@@ -208,6 +216,66 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
                 }
             }
         }
+
+        scratch.Clear();
+        if (hq != null && CollectAiReserve(hq, scratch))
+        {
+            AddEntries(entries, new Report(AiOwner, scratch.ToArray(), Time.time), 0f);
+        }
+    }
+
+    /// <summary>
+    /// What an AI commander playing <paramref name="hq"/> has bought and not yet rolled out, as one
+    /// queue entry at the depot it deploys from first. The AI buys into the faction reserve, not a
+    /// depot queue, so without this a player on its team never saw what was coming.
+    /// </summary>
+    private bool CollectAiReserve(FactionHQ hq, List<string> args)
+    {
+        if (CommanderEnemyCommanderService.EffectiveMode == CommanderEnemyCommanderService.ModeOff
+            || !CommanderUnitCap.IsAiSide(hq))
+        {
+            return false;
+        }
+
+        VehicleDepot? depot = null;
+        List<(VehicleDepot, float)>? depots = CommanderCaptureSpoils.DepotsRef(hq);
+        for (int i = 0; depots != null && i < depots.Count && depot == null; i++)
+        {
+            depot = depots[i].Item1 != null && !depots[i].Item1.disabled ? depots[i].Item1 : null;
+        }
+
+        if (depot == null)
+        {
+            return false;
+        }
+
+        // A player's own queued units take reserve units at the door: those are already in their QUEUE box.
+        bool local = ReferenceEquals(hq, CommanderGameAccess.GetLocalHq());
+        StringBuilder runs = new();
+        int count = 0;
+        foreach (KeyValuePair<VehicleDefinition, FactionHQ.RuntimeSupply> entry in hq.VehicleSupply)
+        {
+            int waiting = entry.Key == null ? 0 : entry.Value.Count - (local ? spawnService.CountQueued(entry.Key, unpaidOnly: true) : 0);
+            if (waiting <= 0 || count >= MaxRunsPerQueue)
+            {
+                continue;
+            }
+
+            runs.Append(count++ > 0 ? "," : string.Empty)
+                .Append(entry.Key!.jsonKey)
+                .Append(':')
+                .Append(CommanderNetwork.Num(waiting));
+        }
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        args.Add(CommanderNetwork.Id(depot));
+        args.Add(CommanderNetwork.Num(-1f));
+        args.Add(runs.ToString());
+        return true;
     }
 
     private void SyncTeamQueues(FactionHQ hq, List<string[]> messages)
@@ -237,7 +305,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         if (ReferenceEquals(CommanderGameAccess.GetLocalHq(), hq))
         {
             scratch.Clear();
-            spawnService.CollectOwnQueues(scratch, MaxQueuesPerPlayer, MaxRunsPerQueue);
+            CollectOwnQueues(scratch);
             Player? local = LocalPlayer();
             string id = local != null ? local.NetId.ToString(CultureInfo.InvariantCulture) : string.Empty;
             string owner = OwnerName(local);
@@ -249,6 +317,16 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
                 args.Add(scratch[i + 1]);
                 args.Add(scratch[i + 2]);
             }
+        }
+
+        scratch.Clear();
+        if (CollectAiReserve(hq, scratch))
+        {
+            args.Add("ai");
+            args.Add(AiOwner);
+            args.Add(scratch[0]);
+            args.Add(scratch[1]);
+            args.Add(scratch[2]);
         }
 
         messages.Add(args.ToArray());
@@ -286,7 +364,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
         {
             Entry entry = entries[i];
             bool known = CommanderNetwork.TryUnit(entry.DepotId, out Unit unit);
-            string units = DescribeRuns(entry, known ? unit as VehicleDepot : null);
+            string units = DescribeRuns(entry, known ? unit : null);
             if (units.Length == 0)
             {
                 continue;
@@ -302,7 +380,7 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
 
     internal sealed class TeamRun
     {
-        internal TeamRun(VehicleDepot depot, VehicleDefinition definition, int count, string owner, float buildDoneAt)
+        internal TeamRun(Unit depot, UnitDefinition definition, int count, string owner, float buildDoneAt)
         {
             Depot = depot;
             Definition = definition;
@@ -311,9 +389,10 @@ internal sealed class CommanderTeamQueueService : ICommanderTickPersistent, ICom
             BuildDoneAt = buildDoneAt;
         }
 
-        internal VehicleDepot Depot { get; }
+        /// <summary>The vehicle depot or naval dock it is queued at.</summary>
+        internal Unit Depot { get; }
 
-        internal VehicleDefinition Definition { get; }
+        internal UnitDefinition Definition { get; }
 
         internal int Count { get; }
 

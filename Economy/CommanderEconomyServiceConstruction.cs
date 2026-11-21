@@ -38,12 +38,11 @@ internal sealed partial class CommanderEconomyService
     /// base, which read as wandering off with no order.</summary>
     private const float AutoBuildRangeMeters = 3000f;
 
-    /// <summary>An enemy blueprint no builder has reached in this long is refunded, so a commander
-    /// that lost every builder and cannot buy one is not stuck saving for a building forever.</summary>
-    private const float EnemyBlueprintTimeoutSeconds = 300f;
-
-    // Cross-country pace a builder is given to reach a far blueprint before the timeout counts.
-    private const float BuilderTravelMetersPerSecond = 5f;
+    /// <summary>An enemy blueprint still standing this long after it was paid for is refunded, however
+    /// far along it is. A build takes seconds once a builder is on it, so one this old has a builder
+    /// that cannot reach it, or none. The clock is never reset, or a stuck blueprint could hold its
+    /// slot all match.</summary>
+    private const float EnemyBlueprintTimeoutSeconds = 600f;
 
     /// <summary>Furthest an AI builder drives off road to a blueprint; further, it takes the roads.
     /// Every AI site is within <c>BaseSiteMaxMeters</c> (900 m) of a base, so this is its own base.</summary>
@@ -60,7 +59,7 @@ internal sealed partial class CommanderEconomyService
 
     /// <summary>Scaled seconds an AI builder short of its blueprint may go without moving
     /// <see cref="BuilderStuckMeters"/> before it is let go of the job.</summary>
-    private const float BuilderStuckSeconds = 90f;
+    private const float BuilderStuckSeconds = 30f;
 
     private const float BuilderStuckMeters = 15f;
 
@@ -305,6 +304,12 @@ internal sealed partial class CommanderEconomyService
             moves?.ClearOrder(units[i]);
             queuedBuildOrders.Remove(units[i]);
             request[i + 1] = CommanderNetwork.Id(units[i]);
+
+            // The host sets the destination, so the guest's ServerSetDestination hook never sees it.
+            if (CommanderNetwork.IsGuest)
+            {
+                moves?.ShowPlayerDestination(units[i], PickBuilderSlot(site, units[i]));
+            }
         }
 
         if (!CommanderNetwork.IsHandlingGuest)
@@ -503,7 +508,8 @@ internal sealed partial class CommanderEconomyService
             site.Site.z + (Mathf.Sin(angle) * site.RingRadius)));
     }
 
-    private static void SendBuilder(ConstructionSite site, Unit builder)
+    /// <summary>The ring slot <paramref name="builder"/> is sent to; a guest picks it too, for its MOVE marker.</summary>
+    private static GlobalPosition PickBuilderSlot(ConstructionSite site, Unit builder)
     {
         // The first slot faces the builder: a blueprint has no collider, so the pathfinder drives
         // straight across it to a slot on the far side, and the building then rises round the truck.
@@ -518,6 +524,43 @@ internal sealed partial class CommanderEconomyService
         {
             post = GetRingSlot(site, angle + (step * Mathf.PI / 6f));
         }
+
+        return post;
+    }
+
+    /// <summary>Why a blueprint went unbuilt, for the give-up line: its assigned builder and how far
+    /// off it stands, or the nearest of the faction's builders when none was assigned.</summary>
+    private static string DescribeStall(ConstructionSite site)
+    {
+        for (int b = 0; b < site.Builders.Count; b++)
+        {
+            Unit unit = site.Builders[b];
+            if (unit != null && !unit.disabled)
+            {
+                return $"{CommanderGameAccess.GetUnitLabel(unit)} assigned, {FastMath.Distance(unit.GlobalPosition(), site.Site):0} m off"
+                    + (unit.IsSlung() ? " on a sling" : string.Empty);
+            }
+        }
+
+        float nearest = float.MaxValue;
+        if (site.Hq.factionUnits != null)
+        {
+            foreach (PersistentID id in site.Hq.factionUnits)
+            {
+                if (id.TryGetUnit(out Unit unit) && unit is GroundVehicle && !unit.disabled && CommanderRepairService.IsRepairUnit(unit))
+                {
+                    nearest = Mathf.Min(nearest, FastMath.Distance(unit.GlobalPosition(), site.Site));
+                }
+            }
+        }
+
+        return nearest < float.MaxValue ? $"no builder assigned, nearest {nearest:0} m off" : "no builder left";
+    }
+
+    private static void SendBuilder(ConstructionSite site, Unit builder)
+    {
+        Vector3 from = builder.GlobalPosition() - site.Site;
+        GlobalPosition post = PickBuilderSlot(site, builder);
 
         // A stopped vehicle is held in place whatever it is told next.
         CommanderGameAccess.SetUnitHoldPosition(builder, false);
@@ -547,11 +590,6 @@ internal sealed partial class CommanderEconomyService
             {
                 site.Builders.Add(builder);
             }
-
-            // The timeout is "nobody came", not "nobody came within 300 s of queueing": a builder
-            // sent from the home base to a blueprint at a captured field 10-45 km away never made
-            // it, so every build away from home was refunded and queued again for the whole match.
-            site.QueuedAt = Mathf.Max(site.QueuedAt, Time.time + (from.magnitude / BuilderTravelMetersPerSecond));
         }
     }
 
@@ -659,6 +697,7 @@ internal sealed partial class CommanderEconomyService
     {
         Quaternion rotation = facing ?? Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
         if (definition == null
+            || !HasBlueprintRoomAt(hq, position)
             || !preview.IsSiteAllowed(definition, position, hq, out _, kind == CommanderBuildKind.NavalDock, rotation)
             || !CommanderGameAccess.TrySpend(hq, cost))
         {
@@ -732,15 +771,14 @@ internal sealed partial class CommanderEconomyService
             site.Progress += site.Working * step;
             if (site.Progress < 1f)
             {
-                if (site.Progress <= 0f
-                    && Time.time - site.QueuedAt > EnemyBlueprintTimeoutSeconds
+                if (Time.time - site.QueuedAt > EnemyBlueprintTimeoutSeconds
                     && CommanderEnemyCommanderService.IsAiFaction(site.Hq, CommanderGameAccess.GetLocalHq()))
                 {
                     constructionSites.RemoveAt(i);
                     site.Hq.AddFunds(site.Cost);
                     CommanderPlugin.Log.LogInfo(
-                        $"Enemy commander ({site.Hq.faction.name}) gave up on its {site.Label} blueprint: "
-                            + "no builder reached it. Refunded.");
+                        $"Enemy commander ({site.Hq.faction.name}) gave up on its {site.Label} blueprint after "
+                            + $"{Time.time - site.QueuedAt:0} s at {site.Progress:P0}: {DescribeStall(site)}. Refunded.");
                     continue;
                 }
 
@@ -924,19 +962,12 @@ internal sealed partial class CommanderEconomyService
                 // for the rest of the match, and its own base bought another to replace it.
                 if (ai && (nearest < 0 || best > driveSquared) && HasBusyBuilderNear(hq, site.Site))
                 {
-                    // Waiting on purpose is not "nobody came": the timeout refunded these and the
-                    // ladder queued them again all match, the dock among them.
-                    site.QueuedAt = Time.time;
                     continue;
                 }
 
                 if (local && nearest < 0)
                 {
-                    if (TrySpawnLocalBuilder(site))
-                    {
-                        site.QueuedAt = Time.time;
-                    }
-
+                    TrySpawnLocalBuilder(site);
                     continue;
                 }
 

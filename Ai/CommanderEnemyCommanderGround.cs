@@ -94,6 +94,8 @@ internal sealed partial class CommanderEnemyCommanderService
     /// no weapon stations, so before one has rolled out its reach is unknown and it may be bought.</summary>
     private static readonly Dictionary<VehicleDefinition, float> ArtilleryReach = new();
 
+    private readonly List<Airbase> attackedBases = new();
+
     private readonly List<Unit> reconUnits = new();
     private readonly List<Ship> staleShips = new();
     private readonly List<ShipDefinition> shipCatalog = new();
@@ -200,6 +202,23 @@ internal sealed partial class CommanderEnemyCommanderService
             ShipType.CV or ShipType.LHA => 1,
             _ => 0,
         };
+    }
+
+    private static Airbase? NearestBase(List<Airbase> bases, GlobalPosition from)
+    {
+        Airbase? best = null;
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i < bases.Count; i++)
+        {
+            float distance = FastMath.Distance(bases[i].center.GlobalPosition(), from);
+            if (distance < bestDistance)
+            {
+                best = bases[i];
+                bestDistance = distance;
+            }
+        }
+
+        return best;
     }
 
     private static bool TryPlaceBattery(Unit unit, GlobalPosition target, int index, out GlobalPosition post)
@@ -334,6 +353,7 @@ internal sealed partial class CommanderEnemyCommanderService
         for (int i = 0; i < staleDefenders.Count; i++)
         {
             state.Batteries.Remove(staleDefenders[i]);
+            state.BatteryTargets.Remove(staleDefenders[i]);
         }
 
         if (hq.factionUnits == null)
@@ -341,18 +361,38 @@ internal sealed partial class CommanderEnemyCommanderService
             return;
         }
 
+        // Ballistic launchers go for the player's opening base. Guns back the pushes: each shells the
+        // player base under attack nearest to it, else the player base nearest a depot. The buy gate
+        // (ArtilleryDistance) is that nearest base.
         GlobalPosition target = GetStrikeTarget(localHq);
+        Airbase? frontBase = null;
+        CommanderCaptureService.Instance?.CollectAttackedBases(hq, localHq, attackedBases);
         state.ArtilleryDepot = null;
         state.ArtilleryDistance = 0f;
         List<(VehicleDepot, float)> depots = CommanderCaptureSpoils.DepotsRef(hq);
         for (int i = 0; i < depots.Count; i++)
         {
             VehicleDepot depot = depots[i].Item1;
-            float distance = depot == null || depot.disabled ? float.MaxValue : FastMath.Distance(depot.GlobalPosition(), target);
-            if (distance < float.MaxValue && (state.ArtilleryDepot == null || distance < state.ArtilleryDistance))
+            if (depot == null || depot.disabled)
             {
-                state.ArtilleryDepot = depot;
-                state.ArtilleryDistance = distance;
+                continue;
+            }
+
+            foreach (Airbase airbase in localHq.GetAirbases())
+            {
+                if (airbase == null || airbase.disabled || airbase.center == null)
+                {
+                    continue;
+                }
+
+                GlobalPosition at = airbase.center.GlobalPosition();
+                float distance = FastMath.Distance(depot.GlobalPosition(), at);
+                if (state.ArtilleryDepot == null || distance < state.ArtilleryDistance)
+                {
+                    state.ArtilleryDepot = depot;
+                    state.ArtilleryDistance = distance;
+                    frontBase = airbase;
+                }
             }
         }
 
@@ -384,16 +424,28 @@ internal sealed partial class CommanderEnemyCommanderService
                 launchers++;
             }
 
+            Airbase? aim = ballistic ? null : NearestBase(attackedBases, unit.GlobalPosition()) ?? frontBase;
+            if (aim != null
+                && state.BatteryTargets.TryGetValue(unit, out Airbase had)
+                && !ReferenceEquals(had, aim))
+            {
+                state.Batteries.Remove(unit);
+            }
+
             if (!state.Batteries.TryGetValue(unit, out GlobalPosition post))
             {
                 if (ballistic
                     ? !TryPlaceStrikeSlot(state, unit, target, out post)
-                    : !TryPlaceBattery(unit, target, state.Batteries.Count, out post))
+                    : !TryPlaceBattery(unit, aim != null ? aim.center.GlobalPosition() : target, state.Batteries.Count, out post))
                 {
                     continue;
                 }
 
                 state.Batteries[unit] = post;
+                if (aim != null)
+                {
+                    state.BatteryTargets[unit] = aim;
+                }
             }
 
             if (ballistic && ReviewStrikeLauncher(localHq, state, unit, post))

@@ -73,6 +73,7 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
     private readonly List<Unit> hostiles = new();
     private readonly List<Unit> staleStances = new();
     private readonly List<Unit> attackScratch = new();
+    private readonly List<Unit> ballisticScratch = new();
     private float nextRouteTickAt;
     private int routeTick;
 
@@ -87,6 +88,7 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         CommanderNetwork.OnHost("areafire", CommanderAreaFire.HostAreaFire);
         CommanderNetwork.OnHost("areafire.radius", CommanderAreaFire.HostAreaRadius);
         CommanderNetwork.OnHost("areafire.stop", CommanderAreaFire.HostAreaStop);
+        CommanderNetwork.OnHost("areafire.target", CommanderAreaFire.HostTargetedFire);
     }
 
     internal static CommanderMoveService? Instance { get; private set; }
@@ -1027,6 +1029,12 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         RefreshOrderFlags();
     }
 
+    internal void ShowPlayerDestination(Unit unit, GlobalPosition destination)
+    {
+        stoppedUnits.Remove(unit);
+        playerDestinations[unit] = destination;
+    }
+
     internal bool TryGetPlayerDestination(Unit unit, out GlobalPosition destination)
     {
         return playerDestinations.TryGetValue(unit, out destination);
@@ -1304,6 +1312,13 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
         // where it was seen and waits there instead of homing on it through the fog. Nothing known
         // at all means hold.
         GlobalPosition targetPosition = unit.NetworkHQ?.GetKnownPosition(target) ?? unit.GlobalPosition();
+
+        // The Leviathan's copy stands kilometres inside its waist: close on the skin instead.
+        if (CommanderLeviathanWorld.IsCopy(target))
+        {
+            targetPosition = CommanderLeviathanWorld.SkinAimPoint(unit.transform.position);
+        }
+
         if (!CommanderSettings.AttackMoveIntoRange)
         {
             return targetPosition;
@@ -1690,6 +1705,13 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
                 continue;
             }
 
+            // A ballistic launcher fires at the target from where it stands instead of driving at it.
+            if (attackTarget != null && CommanderAreaFire.IsBallisticLauncher(unit))
+            {
+                ballisticScratch.Add(unit);
+                continue;
+            }
+
             (bool valid, GlobalPosition point) = resolvePoint(unit);
             if (!valid)
             {
@@ -1749,6 +1771,12 @@ internal sealed class CommanderMoveService : ICommanderTickPersistent, ICommande
             stoppedUnits.Remove(unit);
             playerDestinations.Remove(unit);
             CommanderGameAccess.SetUnitHoldPosition(unit, false);
+        }
+
+        if (ballisticScratch.Count > 0)
+        {
+            CommanderAreaFire.PlaceTargeted(ballisticScratch, attackTarget!);
+            ballisticScratch.Clear();
         }
 
         RefreshOrderFlags();

@@ -5,7 +5,7 @@ namespace GroundControlRts;
 
 /// <summary>
 /// The ballistic strike site: every ballistic launcher parks round one ammo dump in front of the
-/// artillery depot, shells the nearest of the player's bases in reach, and one munitions truck runs
+/// artillery depot, shells the most valuable of the player's bases in reach that it knows of, and one munitions truck runs
 /// ordnance from a bunker to the dump so the launchers can reload where they stand.
 /// </summary>
 /// <remarks>
@@ -34,6 +34,9 @@ internal sealed partial class CommanderEnemyCommanderService
 
     /// <summary>Scatter of the shelling round the target base's centre.</summary>
     private const float StrikeAreaRadiusMeters = 300f;
+
+    /// <summary>Known player units this close to a base's centre count toward its strike value.</summary>
+    private const float StrikeBaseValueMeters = 1000f;
 
     /// <summary>A truck this close to the bunker or the dump loads or unloads.</summary>
     private const float StrikeTruckReachMeters = 150f;
@@ -102,8 +105,8 @@ internal sealed partial class CommanderEnemyCommanderService
     }
 
     /// <summary>
-    /// Opens fire once the launcher stands on its slot, at the nearest of the player's bases it
-    /// reaches. True while it is shelling, so the caller leaves it where it is: area fire holds the
+    /// Opens fire once the launcher stands on its slot, at the player's base in reach holding the
+    /// most known value (<see cref="GetKnownBaseValue"/>). True while it is shelling, so the caller leaves it where it is: area fire holds the
     /// vehicle, and a fresh pin would only be an RPC and a path search to the spot it stands on.
     /// </summary>
     private static bool ReviewStrikeLauncher(FactionHQ localHq, CommanderState state, Unit launcher, GlobalPosition post)
@@ -111,10 +114,13 @@ internal sealed partial class CommanderEnemyCommanderService
         if (CommanderAreaFire.IsAreaFiring(launcher))
         {
             // A base that changed hands is not the player's any more; the next review re-aims.
+            // A base already flattened (nothing standing the AI knows of) is not worth another round.
             if (state.StrikeAims.TryGetValue(launcher, out Airbase aim)
                 && aim != null
                 && !aim.disabled
-                && localHq.ContainsAirbase(aim))
+                && localHq.ContainsAirbase(aim)
+                && launcher.NetworkHQ != null
+                && GetKnownBaseValue(launcher.NetworkHQ, localHq, aim) > 0f)
             {
                 return true;
             }
@@ -128,21 +134,28 @@ internal sealed partial class CommanderEnemyCommanderService
             return false;
         }
 
+        FactionHQ? hq = launcher.NetworkHQ;
+        if (hq == null)
+        {
+            return false;
+        }
+
         float reach = launcher.GetMaxRange();
         Airbase? best = null;
-        float bestDistance = float.MaxValue;
+        float bestValue = 0f;
         foreach (Airbase airbase in localHq.GetAirbases())
         {
-            if (airbase == null || airbase.disabled || airbase.center == null)
+            if (airbase == null || airbase.disabled || airbase.center == null
+                || FastMath.Distance(launcher.GlobalPosition(), airbase.center.GlobalPosition()) > reach)
             {
                 continue;
             }
 
-            float distance = FastMath.Distance(launcher.GlobalPosition(), airbase.center.GlobalPosition());
-            if (distance <= reach && distance < bestDistance)
+            float value = GetKnownBaseValue(hq, localHq, airbase);
+            if (value > bestValue)
             {
                 best = airbase;
-                bestDistance = distance;
+                bestValue = value;
             }
         }
 
@@ -156,6 +169,31 @@ internal sealed partial class CommanderEnemyCommanderService
             $"Enemy commander ({launcher.NetworkHQ?.faction.name}): {CommanderGameAccess.GetUnitLabel(launcher)} "
                 + $"fires on {CommanderCaptureService.GetAirbaseLabel(best)} from its strike site.");
         return true;
+    }
+
+    /// <summary>
+    /// Summed price of the player's live units <paramref name="hq"/> tracks (its radar picture, plus
+    /// the buildings it was handed) within <see cref="StrikeBaseValueMeters"/> of the base centre.
+    /// A nuked, unrebuilt base sums to zero and is never picked again.
+    /// </summary>
+    private static float GetKnownBaseValue(FactionHQ hq, FactionHQ localHq, Airbase airbase)
+    {
+        GlobalPosition centre = airbase.center.GlobalPosition();
+        float value = 0f;
+        foreach (KeyValuePair<PersistentID, TrackingInfo> entry in hq.trackingDatabase)
+        {
+            if (entry.Value.TryGetUnit(out Unit unit)
+                && unit != null
+                && !unit.disabled
+                && unit.definition != null
+                && ReferenceEquals(unit.NetworkHQ, localHq)
+                && FastMath.InRange(entry.Value.lastKnownPosition, centre, StrikeBaseValueMeters))
+            {
+                value += Mathf.Max(0f, unit.definition.value);
+            }
+        }
+
+        return value;
     }
 
     /// <summary>Any munitions truck that is not the home guard's.</summary>

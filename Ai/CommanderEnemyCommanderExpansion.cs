@@ -116,6 +116,7 @@ internal sealed partial class CommanderEnemyCommanderService
     private static bool IsNeutralTarget(Airbase? airbase)
     {
         return airbase != null
+            && !CommanderSettings.DisableCapture
             && !airbase.disabled
             && airbase.center != null
             && airbase.CurrentHQ == null

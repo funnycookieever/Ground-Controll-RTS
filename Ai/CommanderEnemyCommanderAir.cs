@@ -567,7 +567,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
         foreach (PersistentID id in hq.factionUnits)
         {
-            if (id.TryGetUnit(out Unit unit) && unit is Aircraft aircraft && !unit.disabled)
+            if (id.TryGetUnit(out Unit unit) && unit is Aircraft aircraft && !unit.disabled && !CommanderFreeAiPilots.IsFree(aircraft))
             {
                 yield return aircraft;
             }
@@ -1139,6 +1139,7 @@ internal sealed partial class CommanderEnemyCommanderService
             if (id.TryGetUnit(out Unit unit)
                 && unit is Aircraft aircraft
                 && !unit.disabled
+                && !CommanderFreeAiPilots.IsFree(aircraft)
                 && !IsRadarPicket(aircraft.definition, hq)
                 && GetAirRole(aircraft) == role)
             {
@@ -2062,12 +2063,15 @@ internal sealed partial class CommanderEnemyCommanderService
         float halfway = FastMath.Distance(home, target) * 0.5f;
         float closest = float.MaxValue;
         bool found = false;
+        CommanderCaptureService? capture = CommanderCaptureService.Instance;
         foreach (PersistentID id in hq.factionUnits)
         {
+            // Only vehicles on a push count, not a SAM launcher set up forward or a base guard.
             if (!id.TryGetUnit(out Unit unit)
                 || unit == null
                 || unit.disabled
-                || unit is not GroundVehicle vehicle)
+                || unit is not GroundVehicle vehicle
+                || (capture != null && !capture.IsOnEnemyDrive(vehicle)))
             {
                 continue;
             }
@@ -2224,7 +2228,7 @@ internal sealed partial class CommanderEnemyCommanderService
         int count = 0;
         foreach (PersistentID id in hq.factionUnits)
         {
-            if (id.TryGetUnit(out Unit unit) && unit is Aircraft && !unit.disabled)
+            if (id.TryGetUnit(out Unit unit) && unit is Aircraft aircraft && !unit.disabled && !CommanderFreeAiPilots.IsFree(aircraft))
             {
                 count++;
             }
@@ -2289,7 +2293,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
     /// <summary>
     /// Buys one aircraft and launches it directly, instead of topping up stock and relying on
-    /// <c>FactionHQ.DeployAIAircraft</c> (off in the duel, see <c>PrepareDuel</c>), which picks a random
+    /// <c>FactionHQ.DeployAIAircraft</c> (free pilots only in the duel, see <c>CommanderFreeAiPilots</c>), which picks a random
     /// airframe and a random field. Here the field is chosen first and only aircraft it accepts are
     /// considered. Returns what it spent.
     /// </summary>
@@ -2339,15 +2343,24 @@ internal sealed partial class CommanderEnemyCommanderService
             }
         }
 
-        // Stock first, whatever the role: it is already paid for. The any-role pass below only runs when
+        // Stock, whatever the role: it is already paid for. The any-role pass below only runs when
         // the wanted role cannot be bought, and a commander that can always buy it new (GOD, any rich
         // one) left its plants' output and every recovered airframe in the hangar all match. A budget
         // of 0 lets only stocked airframes through. Not in a draft, where everything is stock and the
         // role pick below is what composes the wing.
+        AirRole wanted = ChooseAirRole(hq, playerForce);
+
+        // Strike buys alternate between close support and bombing, decided before the pick so the
+        // airframe is chosen for the job (a Brawler over the convoys, a Darkreach for the factories)
+        // instead of rolling the job onto whatever was bought.
+        bool bombing = state.NextStrikeBombs;
+
+        // Stock flies and the wanted buy still happens in the same review.
+        float launched = 0f;
         if (!CommanderDraftService.IsDraftMission && HasAirStock(hq))
         {
-            float launched = TryBuyRole(hq, state, 0f, null, state.NextStrikeBombs, false, playerForce);
-            if (launched > 0f)
+            launched = TryBuyRole(hq, state, 0f, null, bombing, false, playerForce);
+            if (launched > 0f && CountAirborne(hq) >= airborneLimit)
             {
                 return launched;
             }
@@ -2357,12 +2370,7 @@ internal sealed partial class CommanderEnemyCommanderService
         // can replace anything it loses, so the first airframe it buys is already the dear one.
         bool rich = wealthSteps >= DearAirframeDecades;
 
-        AirRole wanted = ChooseAirRole(hq, playerForce);
-
-        // Strike buys alternate between close support and bombing, decided before the pick so the
-        // airframe is chosen for the job (a Brawler over the convoys, a Darkreach for the factories)
-        // instead of rolling the job onto whatever was bought.
-        bool bombing = state.NextStrikeBombs;
+        budget = Mathf.Max(0f, budget - launched);
         float spent = TryBuyRole(
             hq, state, budget, wanted, bombing, rich || CountRole(hq, wanted) >= CheapAirframesPerRole, playerForce);
         if (spent > 0f && wanted == AirRole.Strike)
@@ -2371,10 +2379,12 @@ internal sealed partial class CommanderEnemyCommanderService
         }
 
         // Saving for the wanted role never holds back stock of another role: the wrong aircraft in
-        // the air beats the right one still being saved for.
-        if (spent > 0f || (savingFor != null && !HasAirStock(hq)))
+        // the air beats the right one still being saved for. A bomber is saved for even with stock
+        // in the hangar, or the fund never reaches one.
+        bool bomberTurn = wanted == AirRole.Strike && bombing && HasBomberOnOffer(hq);
+        if (spent > 0f || launched > 0f || (savingFor != null && (bomberTurn || !HasAirStock(hq))))
         {
-            return spent;
+            return launched + spent;
         }
 
         // Nothing in the wanted role fits the budget or the strip — or this faction's roster has no
@@ -2521,6 +2531,30 @@ internal sealed partial class CommanderEnemyCommanderService
         return pick;
     }
 
+    /// <summary>True when a held field can launch an airframe built for bombing (Alkyon, Darkreach).</summary>
+    private bool HasBomberOnOffer(FactionHQ hq)
+    {
+        foreach (AircraftDefinition definition in GetAirRoster(hq))
+        {
+            if (GetJobFit(definition, AirRole.Strike, bombing: true) < 3
+                || IsBenched(definition)
+                || !IsInDraftStock(hq, definition))
+            {
+                continue;
+            }
+
+            foreach (Airbase airbase in hq.GetAirbases())
+            {
+                if (airbase != null && !airbase.disabled && airbase.center != null && CanLaunchFrom(airbase, hq, definition))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private bool IsAirCandidate(AircraftDefinition definition)
     {
         for (int i = 0; i < airCandidates.Count; i++)
@@ -2546,8 +2580,9 @@ internal sealed partial class CommanderEnemyCommanderService
         foreach (PersistentID id in hq.factionUnits)
         {
             if (id.TryGetUnit(out Unit unit)
-                && unit is Aircraft
+                && unit is Aircraft airframe
                 && !unit.disabled
+                && !CommanderFreeAiPilots.IsFree(airframe)
                 && unit.definition is AircraftDefinition definition)
             {
                 airframesOwned.TryGetValue(definition, out int owned);
@@ -2668,10 +2703,15 @@ internal sealed partial class CommanderEnemyCommanderService
             reference = KeepAntiShipCandidates(airCandidates, playerForce.ShipArmour, IsChallenging(hq), escalate, reference);
         }
 
-        reference = KeepStockedCandidates(hq, escalate, reference);
-
-        // Past the opening only the best-suited airframes the fund can pay for stay in the roll.
+        // Past the opening only the best-suited airframes the fund can pay for stay in the roll. On a
+        // bombing buy that is decided before stock: a stocked trainer is not a bomber.
         bool byJob = escalate && !antiShip;
+        bool bomberBuy = byJob && role == AirRole.Strike && bombing;
+        if (!bomberBuy)
+        {
+            reference = KeepStockedCandidates(hq, escalate, reference);
+        }
+
         int bestFit = 0;
         for (int i = 0; byJob && i < airCandidates.Count; i++)
         {
@@ -2683,12 +2723,17 @@ internal sealed partial class CommanderEnemyCommanderService
             airCandidates.RemoveAll(candidate => GetJobFit(candidate.Definition, role, bombing) < bestFit);
         }
 
+        if (bomberBuy)
+        {
+            reference = KeepStockedCandidates(hq, escalate, reference);
+        }
+
         // Past the cheap opening, save for the best airframe for the job instead of buying whatever is
         // affordable this review. Free stock still flies, and AccrueFund's ceiling is at least this
         // price, so this never holds forever.
         bool stocked = airCandidates.Count > 0 && GetLaunchPrice(hq, airCandidates[0].Definition) <= 0f;
         if (savingFor != null
-            && !stocked
+            && (!stocked || bomberBuy)
             && budget < CommanderEconomyService.PriceOf(savingFor)
             && bestFit < savingForFit)
         {
@@ -3141,7 +3186,7 @@ internal sealed partial class CommanderEnemyCommanderService
 
         foreach (PersistentID id in hq.factionUnits)
         {
-            if (!id.TryGetUnit(out Unit unit) || unit is not Aircraft aircraft || unit.disabled)
+            if (!id.TryGetUnit(out Unit unit) || unit is not Aircraft aircraft || unit.disabled || CommanderFreeAiPilots.IsFree(aircraft))
             {
                 continue;
             }

@@ -142,6 +142,14 @@ internal sealed partial class CommanderEnemyCommanderService
     /// is far too loose for this — a rearmer serves what is parked beside it.</summary>
     private const float RearmArrivedMeters = 60f;
 
+    /// <summary>A guard munitions truck below this much of its load drives to a bunker to refill
+    /// instead of taking runs to dry defenders.</summary>
+    private const float GuardTruckDryBelow = 0.1f;
+
+    /// <summary>A truck this close to a bunker loads from it. A bunker is big and the truck stops
+    /// short of its centre, so wider than <see cref="RearmArrivedMeters"/>; the strike truck's figure.</summary>
+    private const float TruckRestockReachMeters = 150f;
+
     /// <summary>
     /// How far out a tracked hostile counts as an attack on the base. This is the "it can see it on
     /// the radar" range, so it is deliberately far wider than weapon range: the point is to be
@@ -200,14 +208,27 @@ internal sealed partial class CommanderEnemyCommanderService
     private static readonly Dictionary<VehicleDefinition, bool> FireControlTypes = new();
     private static readonly Dictionary<Unit, GlobalPosition> PendingPins = new();
     private static readonly List<Unit> PinBatch = new();
+
+    /// <summary>Rear depots already logged as holding a convoy, so the log shows the rule once each.</summary>
+    private static readonly HashSet<VehicleDepot> LoggedRearHolds = new();
     private static int pinFrame = -1;
     private static int pinsThisFrame;
 
     private readonly List<Unit> defenceCandidates = new();
     private readonly List<Unit> staleDefenders = new();
     private readonly List<Unit> relinkScratch = new();
-    private readonly List<GlobalPosition> baseCentres = new();
-    private readonly List<int> baseCounts = new();
+
+    /// <summary>Guard munitions trucks sent to a dry defender this review: they leave their post
+    /// for it, and the support review does not pin them back.</summary>
+    private readonly HashSet<Unit> rearmRuns = new();
+
+    // Each base's own guard, filled by CountGuardByBase.
+    private readonly List<Airbase> guardBases = new();
+    private readonly List<GlobalPosition> guardCentres = new();
+    private readonly List<int> guardGround = new();
+    private readonly List<int> guardAir = new();
+    private readonly List<bool> guardFields = new();
+    private readonly List<VehicleDepot> depotScratch = new();
     private readonly List<int> depotKeys = new();
     private readonly System.Text.StringBuilder guardReport = new();
     private int[] postOccupancy = new int[1];
@@ -352,7 +373,20 @@ internal sealed partial class CommanderEnemyCommanderService
             && state.ArtilleryDepot != null
             && !state.ArtilleryDepot.disabled
             && state.ArtilleryDepot.NetworkHQ == depot.NetworkHQ
-            && !ReferenceEquals(state.ArtilleryDepot, depot);
+            && !ReferenceEquals(state.ArtilleryDepot, depot)
+            && CanField(state.ArtilleryDepot, definition);
+    }
+
+    /// <summary>
+    /// The routed depot is chosen by distance, the purchase by the best depot's tier. A unit whose
+    /// routed depot is below its tier leaves wherever it can.
+    /// </summary>
+    internal static bool CanField(VehicleDepot depot, VehicleDefinition definition)
+    {
+        return CommanderEconomyService.Instance == null
+            || CommanderDraftService.IsDraftMission
+            || CommanderEconomyService.GetDepotLevel(CommanderGameAccess.GetDepotOwner(depot))
+                >= CommanderEconomyService.GetRequiredDepotLevel(definition);
     }
 
     /// <summary>
@@ -370,7 +404,41 @@ internal sealed partial class CommanderEnemyCommanderService
             && !state.SamDepot.disabled
             && state.SamDepot.NetworkHQ == depot.NetworkHQ
             && !ReferenceEquals(state.SamDepot, depot)
-            && IsSamSiteLauncher(definition);
+            && IsSamSiteLauncher(definition)
+            && CanField(state.SamDepot, definition);
+    }
+
+    /// <summary>
+    /// The same door for the rest of the air defence: while a base that can field its own is short
+    /// of it, air defence rolls out only at that base's depots.
+    /// StratoLances have their own door, <see cref="HoldsSamLauncherAt"/>.
+    /// </summary>
+    internal static bool HoldsAirDefenceAt(VehicleDepot depot, VehicleDefinition definition)
+    {
+        if (!IsAirDefence(definition)
+            || IsSamSiteLauncher(definition)
+            || Instance == null
+            || depot == null
+            || depot.NetworkHQ == null
+            || !Instance.states.TryGetValue(depot.NetworkHQ, out CommanderState state)
+            || state.AirShortDepots.Count == 0
+            || state.AirShortDepots.Contains(depot))
+        {
+            return false;
+        }
+
+        // Only for a door that can field it: a level-1 depot at the short base cannot, and holding the
+        // launcher for it would keep it in the reserve for good.
+        for (int i = 0; i < state.AirShortDepots.Count; i++)
+        {
+            VehicleDepot shortDepot = state.AirShortDepots[i];
+            if (shortDepot != null && !shortDepot.disabled && shortDepot.NetworkHQ == depot.NetworkHQ && CanField(shortDepot, definition))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -394,7 +462,56 @@ internal sealed partial class CommanderEnemyCommanderService
         return wanted != null
             && !wanted.disabled
             && wanted.NetworkHQ == depot.NetworkHQ
-            && !ReferenceEquals(wanted, depot);
+            && !ReferenceEquals(wanted, depot)
+            && CanField(wanted, definition);
+    }
+
+    /// <summary>
+    /// The convoys' door: once the guard is full, an assault vehicle rolls out only at a base whose
+    /// drive at the neutral or enemy base next along is still short of units, or the main effort's
+    /// staging base. Held only while a front depot can field the unit.
+    /// </summary>
+    internal static bool HoldsConvoyAtRear(VehicleDepot depot, VehicleDefinition definition)
+    {
+        CommanderCaptureService? capture = CommanderCaptureService.Instance;
+        if (capture == null
+            || Instance == null
+            || depot == null
+            || depot.NetworkHQ == null
+            || IsAirDefence(definition)
+            || IsSupplyVehicle(definition)
+            || definition.vehicleType == VehicleType.ART
+            || definition.vehicleType == VehicleType.RDR
+            || IsFireControlVehicle(definition)
+            || ReferenceEquals(definition, CommanderGameAccess.FindRepairVehicleDefinition(depot.NetworkHQ))
+            || !Instance.states.TryGetValue(depot.NetworkHQ, out CommanderState state)
+            || (state.WantsDefenceUnit && state.DefencePosts.Count > 0)
+            || !capture.IsRearDepot(depot.NetworkHQ, depot))
+        {
+            return false;
+        }
+
+        List<(VehicleDepot, float)>? depots = CommanderCaptureSpoils.DepotsRef(depot.NetworkHQ);
+        for (int i = 0; depots != null && i < depots.Count; i++)
+        {
+            VehicleDepot other = depots[i].Item1;
+            if (other != null
+                && !other.disabled
+                && CanField(other, definition)
+                && !HoldsAssaultAtIsland(other, definition)
+                && !capture.IsRearDepot(depot.NetworkHQ, other))
+            {
+                if (LoggedRearHolds.Add(depot))
+                {
+                    CommanderPlugin.Log.LogInfo(
+                        $"{depot.NetworkHQ.faction.factionName}'s {depot.name} is behind the front: its assault vehicles roll out at {other.name} instead.");
+                }
+
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -481,8 +598,9 @@ internal sealed partial class CommanderEnemyCommanderService
             return;
         }
 
-        CountPostOccupancy(state, includeSupport: false);
-        CountBaseOccupancy(state);
+        // Most short of its own guard first: every base fields its own, so what is bought for a base
+        // has to roll out at that base's door.
+        CountGuardByBase(hq, state);
         depotKeys.Clear();
         for (int i = 0; i < depots.Count; i++)
         {
@@ -492,13 +610,13 @@ internal sealed partial class CommanderEnemyCommanderService
             {
                 GlobalPosition at = depot.transform.GlobalPosition();
                 float nearest = RecruitRadiusMeters;
-                for (int b = 0; b < baseCentres.Count; b++)
+                for (int b = 0; b < guardCentres.Count; b++)
                 {
-                    float distance = FastMath.Distance(at, baseCentres[b]);
+                    float distance = FastMath.Distance(at, guardCentres[b]);
                     if (distance < nearest)
                     {
                         nearest = distance;
-                        key = baseCounts[b];
+                        key = -(Mathf.Max(0, state.GroundPerBase - guardGround[b]) + Mathf.Max(0, state.AirPerBase - guardAir[b]));
                     }
                 }
             }
@@ -625,6 +743,9 @@ internal sealed partial class CommanderEnemyCommanderService
                 state.Defenders.Remove(unit);
             }
         }
+
+        // The same for the site trucks: ReviewSupport claims them again where they stand.
+        state.Support.Clear();
 
         // A round of one post at every base before the second round anywhere, rather than one base's
         // posts and then the next's. ChooseEmptiestPost fills this list in order, and the guard is
@@ -839,7 +960,7 @@ internal sealed partial class CommanderEnemyCommanderService
             && !IsAaScout(unit)
             && (IsHomeGuardType(unit) || IsNearOwnBase(hq, unit.transform.GlobalPosition(), RecruitRadiusMeters))
             && !(CommanderCaptureService.Instance?.IsOnEnemyDrive(unit) ?? false)
-            && !(IsNuclearArmed(hq) && CommanderFactionVehicleService.GetWarheadCost(unit.definition) > 0);
+            && CommanderFactionVehicleService.GetWarheadCost(unit.definition) == 0;
     }
 
     /// <summary>The centre of the own base nearest this unit, as recorded against the posts.</summary>
@@ -859,6 +980,20 @@ internal sealed partial class CommanderEnemyCommanderService
         }
 
         return home;
+    }
+
+    /// <summary>Every live depot within <see cref="RecruitRadiusMeters"/> of a base, into <paramref name="into"/>.</summary>
+    private static void CollectBaseDepots(FactionHQ hq, GlobalPosition centre, List<VehicleDepot> into)
+    {
+        List<(VehicleDepot, float)> depots = CommanderCaptureSpoils.DepotsRef(hq);
+        for (int d = 0; d < depots.Count; d++)
+        {
+            VehicleDepot depot = depots[d].Item1;
+            if (depot != null && !depot.disabled && FastMath.InRange(depot.GlobalPosition(), centre, RecruitRadiusMeters))
+            {
+                into.Add(depot);
+            }
+        }
     }
 
     /// <summary>The depot nearest a site, within <see cref="RecruitRadiusMeters"/>.</summary>
@@ -888,31 +1023,6 @@ internal sealed partial class CommanderEnemyCommanderService
     {
         return post < state.DefencePostBases.Count
             && CommanderGameAccess.ApproximatelyEqual(state.DefencePostBases[post], baseCentre, 1f);
-    }
-
-    /// <summary>Whether <paramref name="a"/> beats <paramref name="b"/> for a unit at <paramref name="at"/>:
-    /// the unit's own base first, then the nearer one.</summary>
-    private static bool IsCloserBase(GlobalPosition a, GlobalPosition b, GlobalPosition home, GlobalPosition at)
-    {
-        return IsCloserBase(a, b, home, at, a, b);
-    }
-
-    private static bool IsCloserBase(
-        GlobalPosition a,
-        GlobalPosition b,
-        GlobalPosition home,
-        GlobalPosition at,
-        GlobalPosition baseOfA,
-        GlobalPosition baseOfB)
-    {
-        bool aHome = CommanderGameAccess.ApproximatelyEqual(baseOfA, home, 1f);
-        bool bHome = CommanderGameAccess.ApproximatelyEqual(baseOfB, home, 1f);
-        if (aHome != bHome)
-        {
-            return aHome;
-        }
-
-        return FastMath.Distance(at, a) < FastMath.Distance(at, b);
     }
 
     /// <summary>
@@ -1045,21 +1155,6 @@ internal sealed partial class CommanderEnemyCommanderService
         return launcher;
     }
 
-    /// <summary>SAM launchers already standing in the ring.</summary>
-    private static int CountRingLaunchers(CommanderState state)
-    {
-        int count = 0;
-        foreach (Unit unit in state.Defenders.Keys)
-        {
-            if (IsSamSiteLauncher(unit))
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
     /// <summary>The same question about something the commander is thinking of buying.</summary>
     private static bool IsSamSiteLauncher(VehicleDefinition definition)
     {
@@ -1150,9 +1245,9 @@ internal sealed partial class CommanderEnemyCommanderService
     /// bunker, or one of its trucks. An empty shelf is skipped, because driving a dry launcher to a
     /// dry bunker takes it out of the ring for nothing.
     /// </summary>
-    private static bool TryFindRearmSource(FactionHQ hq, CommanderState state, Unit defender, out GlobalPosition position)
+    private static bool TryFindRearmSource(FactionHQ hq, CommanderState state, Unit defender, bool buildingsOnly, out Unit? store)
     {
-        position = default;
+        store = null;
         if (hq.factionUnits == null)
         {
             return false;
@@ -1168,7 +1263,7 @@ internal sealed partial class CommanderEnemyCommanderService
                 || unit.disabled
                 || ReferenceEquals(unit, defender)
                 || CommanderSupplyStoreService.GetAmmoFraction(unit) <= 0f
-                || (unit is not Building && !state.Support.ContainsKey(unit)))
+                || (unit is not Building && (buildingsOnly || !state.Support.ContainsKey(unit))))
             {
                 continue;
             }
@@ -1178,47 +1273,78 @@ internal sealed partial class CommanderEnemyCommanderService
             if (distance < best)
             {
                 best = distance;
-                position = unit.transform.GlobalPosition();
+                store = unit;
             }
         }
 
-        return best < float.MaxValue;
+        return store != null;
     }
 
     /// <summary>
-    /// Hands the surplus back to the attack. Without this a commander that was raided once keeps a
-    /// wartime guard for the rest of the match and stops pushing.
+    /// The nearest guard munitions truck with ordnance aboard and no run this review.
+    /// <paramref name="busy"/> says the guard has a truck, out on a run or off reloading at a
+    /// bunker, so the defender waits on its post for it rather than driving off itself.
     /// </summary>
-    private static void ReleaseSurplusDefenders(CommanderState state, int target)
+    /// <remarks>Only a truck of the defender's own base, <paramref name="baseCentre"/>.</remarks>
+    private static Unit? FindGuardTruck(
+        CommanderState state, HashSet<Unit> rearmRuns, Unit defender, GlobalPosition baseCentre, out bool busy)
     {
-        while (state.Defenders.Count > target)
+        busy = false;
+        Unit? best = null;
+        float bestDistance = float.MaxValue;
+        foreach (KeyValuePair<Unit, int> entry in state.Support)
         {
-            Unit? release = null;
-            int highestRank = -1;
-            foreach (KeyValuePair<Unit, int> entry in state.Defenders)
+            Unit truck = entry.Key;
+            if (truck == null
+                || truck.disabled
+                || !IsRearmVehicle(truck)
+                || !IsPostAt(state, entry.Value % state.DefencePosts.Count, baseCentre))
             {
-                // Ground vehicles go before launchers. Among each, the highest post index is the
-                // most recently filled one, so the ring thins back the way it was built up rather
-                // than opening a hole in the middle of it.
-                int rank = entry.Value + (DefencePriority(entry.Key) > 0 ? 0 : 100000);
-                if (rank > highestRank)
-                {
-                    highestRank = rank;
-                    release = entry.Key;
-                }
+                continue;
             }
 
-            if (release == null)
+            if (rearmRuns.Contains(truck) || CommanderSupplyStoreService.GetAmmoFraction(truck) < GuardTruckDryBelow)
             {
-                return;
+                busy = true;
+                continue;
             }
 
-            state.Defenders.Remove(release);
-            if (release is GroundVehicle vehicle)
+            float distance = CommanderGameAccess.HorizontalDistance(defender.transform.position, truck.transform.position);
+            if (distance < bestDistance)
             {
-                CommandedDestinationRef(vehicle) = false;
+                bestDistance = distance;
+                best = truck;
             }
         }
+
+        return best;
+    }
+
+    /// <summary>
+    /// A dry munitions truck drives to the nearest stocked bunker and refills there, the only way
+    /// an AI truck gets ordnance (the AI top-up never buys into one). The base game's own restock
+    /// drive is overridden by the pins, so it is done here. True while the truck is on that errand.
+    /// </summary>
+    private static bool DriveToRestock(FactionHQ hq, CommanderState state, Unit truck)
+    {
+        CommanderSupplyStoreService? stores = CommanderSupplyStoreService.Instance;
+        if (stores == null
+            || CommanderSupplyStoreService.GetAmmoFraction(truck) >= GuardTruckDryBelow
+            || !TryFindRearmSource(hq, state, truck, buildingsOnly: true, out Unit? bunker))
+        {
+            return false;
+        }
+
+        if (FastMath.InRange(truck.transform.GlobalPosition(), bunker!.transform.GlobalPosition(), TruckRestockReachMeters))
+        {
+            stores.RefillTruck(truck, bunker);
+        }
+        else
+        {
+            PinTo(truck, bunker.transform.GlobalPosition());
+        }
+
+        return true;
     }
 
     /// <summary>Every combat ground vehicle this faction owns, home guard included.</summary>
@@ -1272,17 +1398,6 @@ internal sealed partial class CommanderEnemyCommanderService
     private static int DefencePriority(Unit unit)
     {
         return unit.definition is VehicleDefinition definition && IsAirDefence(definition) ? 1 : 0;
-    }
-
-    private static int CountAirDefenders(CommanderState state)
-    {
-        int count = 0;
-        foreach (Unit unit in state.Defenders.Keys)
-        {
-            count += DefencePriority(unit);
-        }
-
-        return count;
     }
 
     /// <summary>
@@ -1488,43 +1603,54 @@ internal sealed partial class CommanderEnemyCommanderService
         PruneDefenders(hq, state);
         PruneSlots(state);
 
-        // Every ring holds real air defence, not just whatever combat vehicles were free. Launchers are
-        // taken first, and surplus handed back is ground vehicles first. Every counter-battery mount is
-        // added on top, so it is pinned over a base instead of driven at the player; the cap below never
-        // releases air defence, so once in, they stay.
-        // CHALLENGING keeps only the per-base ring; the rest of its air defence goes with the push.
-        int airTarget = state.DefencePosts.Count == 0
+        // Every base is its own guard: a vehicle guards the base it stands at, never another, and
+        // each base has its own quota.
+        // CHALLENGING keeps only a small ring a base; the rest of its air defence goes with the push.
+        // Under a unit cap, each base's share of the cap's air-defence slots, so one base cannot fill it.
+        int bases = Mathf.Max(state.DefenceBaseCount, 1);
+        state.AirPerBase = state.DefencePosts.Count == 0
             ? 0
-            : IsChallenging(hq) ? ChallengingAirDefenceTarget(state.DefenceBaseCount)
-            : (state.DefenceBaseCount * AirDefendersPerBase) + CountCounterBatteryVehicles(hq);
-        RecruitAirDefence(hq, state, airTarget);
-
-        // The ground half: GroundDefendersPerBase a base, never more than a fifth of the army. Air
-        // defence (launchers included) rides on top and is never released here, or the two
-        // recruiters would trade it back and forth every review.
-        int groundTarget = state.DefencePosts.Count == 0
-            ? 0
-            : Mathf.Min(
-                state.DefenceBaseCount * GroundDefendersPerBase(),
-                CountCombatVehicles(hq) * MaxHomeGuardPercent / 100);
-        int target = CountAirDefenders(state) + groundTarget;
-        if (state.Defenders.Count > target)
+            : IsChallenging(hq) ? Mathf.CeilToInt(ChallengingAirDefenceTarget(bases) / (float)bases)
+            : CommanderUnitCap.Enabled ? AirDefendersPerBase
+            : AirDefendersPerBase - LadsPerBase;
+        if (CommanderUnitCap.Enabled && state.AirPerBase > 0)
         {
-            ReleaseSurplusDefenders(state, target);
-        }
-        else if (state.Defenders.Count < target)
-        {
-            RecruitDefenders(hq, state, target);
+            state.AirPerBase = Mathf.Clamp(CommanderUnitCap.AirDefenceCap / bases, 2, state.AirPerBase);
         }
 
-        // Short of a full ring, or of its launchers, out of what it already owns, so the buy loop
-        // puts an air-defence vehicle ahead of its plan — the same precedence the first launcher and
-        // a capture unit get.
-        state.GuardShort = state.Defenders.Count < target;
-        state.AirGuardShort = CountAirDefenders(state) - CountRingLaunchers(state) < airTarget;
-        state.WantsDefenceUnit = state.Defenders.Count < target
-            || CountAirDefenders(state) - CountRingLaunchers(state) < airTarget;
+        // Never more than a fifth of the army on the rings, shared out evenly.
+        state.GroundPerBase = state.DefencePosts.Count == 0
+            ? 0
+            : Mathf.Min(GroundDefendersPerBase(), CountCombatVehicles(hq) * MaxHomeGuardPercent / 100 / bases);
 
+        CountGuardByBase(hq, state);
+        RecruitAirDefence(hq, state);
+        ReleaseSurplusDefenders(state, state.GroundPerBase);
+        RecruitDefenders(hq, state, state.GroundPerBase);
+
+        // Short only where a base has a depot to field its own guard. While a base is short,
+        // OrderDepotsForGuard puts its depot first, so what is bought rolls out there.
+        bool groundShort = false;
+        bool airShort = false;
+        state.AirShortDepots.Clear();
+        for (int b = 0; b < guardCentres.Count; b++)
+        {
+            if (guardFields[b])
+            {
+                groundShort |= guardGround[b] < state.GroundPerBase;
+                if (guardAir[b] < state.AirPerBase)
+                {
+                    airShort = true;
+                    CollectBaseDepots(hq, guardCentres[b], state.AirShortDepots);
+                }
+            }
+        }
+
+        state.GuardShort = groundShort;
+        state.AirGuardShort = airShort;
+        state.WantsDefenceUnit = groundShort || airShort;
+
+        rearmRuns.Clear();
         foreach (KeyValuePair<Unit, int> entry in state.Defenders)
         {
             // A radar-guided launcher stands on the site post whatever it was assigned, because that
@@ -1533,18 +1659,34 @@ internal sealed partial class CommanderEnemyCommanderService
             GlobalPosition spot = GetSlot(state, entry.Key, station % state.DefencePosts.Count);
 
             // A defender that has shot itself dry is a vehicle-shaped hole in the ring, and nothing
-            // in the game drives it off to restock: it holds the post it was pinned to until
-            // something kills it. Below the threshold it goes to the nearest shelf instead and comes
-            // back on its own, because the next review reads a full rack and sends it to its post.
+            // in the game drives it off to restock. A guard munitions truck drives out to it and the
+            // defender holds its post, even while every truck is busy or reloading. A SAM-site
+            // launcher never leaves its site (the guard buys it a truck); only another defender with
+            // no guard truck at all goes to the nearest shelf itself.
             float ammo = CommanderGameAccess.GetUnitAmmo(entry.Key);
-            if (ammo >= 0f && ammo < DefenceRearmBelow && TryFindRearmSource(hq, state, entry.Key, out GlobalPosition store))
+            if (ammo >= 0f && ammo < DefenceRearmBelow)
             {
-                if (!FastMath.InRange(entry.Key.transform.GlobalPosition(), store, RearmArrivedMeters))
+                GlobalPosition baseCentre = state.DefencePostBases[station % state.DefencePosts.Count];
+                Unit? truck = FindGuardTruck(state, rearmRuns, entry.Key, baseCentre, out bool truckBusy);
+                if (truck != null)
                 {
-                    PinTo(entry.Key, store);
+                    rearmRuns.Add(truck);
+                    if (!FastMath.InRange(truck.transform.GlobalPosition(), entry.Key.transform.GlobalPosition(), RearmArrivedMeters))
+                    {
+                        PinTo(truck, entry.Key.transform.GlobalPosition());
+                    }
                 }
+                else if (!truckBusy
+                    && !IsSamSiteLauncher(entry.Key)
+                    && TryFindRearmSource(hq, state, entry.Key, buildingsOnly: false, out Unit? store))
+                {
+                    if (!FastMath.InRange(entry.Key.transform.GlobalPosition(), store!.transform.GlobalPosition(), RearmArrivedMeters))
+                    {
+                        PinTo(entry.Key, store.transform.GlobalPosition());
+                    }
 
-                continue;
+                    continue;
+                }
             }
 
             HoldAt(entry.Key, SettleIfStuck(state, entry.Key, spot));
@@ -1601,8 +1743,10 @@ internal sealed partial class CommanderEnemyCommanderService
         // What the guard should be building toward, and what it has: a launcher on each site post,
         // with a fire control and a radar parked beside it. Short of one, the buy review stands up
         // another (TryBuySamLauncher) — nothing in the convoy roll ever reaches for these.
+        // A launcher only for a site that can get one: one at a base whose depot fields it, short of
+        // its launchers, with none already waiting in the reserve.
         int launchers = CountSamLaunchers(hq);
-        state.WantsSamSite = launchers < sites * LaunchersPerSamSite;
+        state.WantsSamSite = CountReserveSamLaunchers(hq) == 0 && HasSiteWantingLauncher(hq, state, sites);
 
         int radars = 0;
         int fireControls = 0;
@@ -1712,8 +1856,30 @@ internal sealed partial class CommanderEnemyCommanderService
         state.SiteRadarDepot = ChooseSiteTruckDepot(hq, state, sites, siteRadars);
         state.SiteFireControlDepot = ChooseSiteTruckDepot(hq, state, sites, siteFireControls);
 
+        // A manned site with no munitions truck of its own buys one, and every manned site gets a
+        // munitions bunker near it, so neither the launchers nor the truck drive back to a base.
+        state.WantsGuardTruck = trucks < manned;
+        for (int i = 0; i < sites && i < state.DefencePosts.Count; i++)
+        {
+            if (siteLaunchers[i] > 0)
+            {
+                CommanderEconomyService.Instance?.EnsureEnemySiteBunker(hq, state.DefencePosts[i]);
+            }
+        }
+
         foreach (KeyValuePair<Unit, int> entry in state.Support)
         {
+            // Out on a run to a dry defender: the defence review pinned it there.
+            if (rearmRuns.Contains(entry.Key))
+            {
+                continue;
+            }
+
+            if (IsRearmVehicle(entry.Key) && DriveToRestock(hq, state, entry.Key))
+            {
+                continue;
+            }
+
             // A site's radar and fire control never settle short of it: the link is 300 m, so a truck
             // set up a kilometre out leaves the launcher silent however long it stands there.
             GlobalPosition spot = GetSlot(state, entry.Key, entry.Value % state.DefencePosts.Count);
@@ -1785,6 +1951,11 @@ internal sealed partial class CommanderEnemyCommanderService
         for (int i = 0; i < defenceCandidates.Count; i++)
         {
             Unit truck = defenceCandidates[i];
+            if (DriveToRestock(hq, state, truck))
+            {
+                continue;
+            }
+
             GlobalPosition destination = hasConvoy
                 ? convoy
                 : state.DefencePosts[(spare + i) % state.DefencePosts.Count];
@@ -1834,7 +2005,185 @@ internal sealed partial class CommanderEnemyCommanderService
         }
     }
 
-    private void RecruitDefenders(FactionHQ hq, CommanderState state, int target)
+    /// <summary>
+    /// Hands the surplus back to the attack, so one raid does not leave a wartime guard for good.
+    /// </summary>
+    /// <remarks>Per base, and ground vehicles only: air defence is never handed back, or the two
+    /// recruiters would trade it back and forth every review.</remarks>
+    private void ReleaseSurplusDefenders(CommanderState state, int perBase)
+    {
+        for (int b = 0; b < guardCentres.Count; b++)
+        {
+            while (guardGround[b] > perBase)
+            {
+                // The highest post index is the most recently filled one, so the ring thins back
+                // the way it was built up rather than opening a hole in the middle of it.
+                Unit? release = null;
+                int highest = -1;
+                foreach (KeyValuePair<Unit, int> entry in state.Defenders)
+                {
+                    if (DefencePriority(entry.Key) == 0 && entry.Value > highest && GuardBaseOf(state, entry.Key, entry.Value) == b)
+                    {
+                        highest = entry.Value;
+                        release = entry.Key;
+                    }
+                }
+
+                if (release == null)
+                {
+                    break;
+                }
+
+                state.Defenders.Remove(release);
+                guardGround[b]--;
+                if (release is GroundVehicle vehicle)
+                {
+                    CommandedDestinationRef(vehicle) = false;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Each base's guard, into <see cref="guardCentres"/>: its ground defenders, its ring air defence
+    /// (LADS, CRAM, SPAAGs, Boltstrikes; not StratoLances, which their sites count), and whether it
+    /// has a depot to field its own.
+    /// </summary>
+    private void CountGuardByBase(FactionHQ hq, CommanderState state)
+    {
+        guardBases.Clear();
+        guardCentres.Clear();
+        guardGround.Clear();
+        guardAir.Clear();
+        guardFields.Clear();
+        for (int i = 0; i < state.DefenceBases.Count; i++)
+        {
+            if (state.DefenceBases[i] == null || state.DefenceBases[i].center == null)
+            {
+                continue;
+            }
+
+            GetBaseRing(state.DefenceBases[i], out GlobalPosition centre, out _);
+            guardBases.Add(state.DefenceBases[i]);
+            guardCentres.Add(centre);
+            guardGround.Add(0);
+            guardAir.Add(0);
+            guardFields.Add(FindSiteDepot(hq, centre) != null);
+        }
+
+        foreach (KeyValuePair<Unit, int> entry in state.Defenders)
+        {
+            // StratoLances are their sites' count (siteLaunchers), not the ring's.
+            // LADS are their own LadsPerBase, beside the ring quota.
+            int b = entry.Key == null || IsSamSiteLauncher(entry.Key) || IsExtraLads(entry.Key)
+                ? -1 : GuardBaseOf(state, entry.Key, entry.Value);
+            if (b < 0)
+            {
+                continue;
+            }
+
+            if (DefencePriority(entry.Key!) > 0)
+            {
+                guardAir[b]++;
+            }
+            else
+            {
+                guardGround[b]++;
+            }
+        }
+    }
+
+    /// <summary>The base (index into <see cref="guardCentres"/>) a defender's post is at.</summary>
+    private int GuardBaseOf(CommanderState state, Unit unit, int post)
+    {
+        int posts = state.DefencePosts.Count;
+        if (posts == 0)
+        {
+            return -1;
+        }
+
+        int station = IsSamSiteLauncher(unit) ? post % SamSiteCount(state) : post;
+        return GuardBaseIndex(state.DefencePostBases[station % posts]);
+    }
+
+    /// <summary>The base a vehicle not yet in the guard would join: the one it stands nearest.</summary>
+    private int GuardBaseAt(CommanderState state, Unit unit)
+    {
+        return state.DefencePostBases.Count == 0 ? -1 : GuardBaseIndex(GetHomeBase(state, unit));
+    }
+
+    private int GuardBaseIndex(GlobalPosition centre)
+    {
+        for (int b = 0; b < guardCentres.Count; b++)
+        {
+            if (CommanderGameAccess.ApproximatelyEqual(guardCentres[b], centre, 1f))
+            {
+                return b;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// A base with a depot that can field <paramref name="definition"/> has fewer than
+    /// <paramref name="perBase"/> of it in its ring, and none is waiting in the reserve to roll out
+    /// there. The buy for a LADS, a CRAM or a Boltstrike asks this per base.
+    /// </summary>
+    private bool BaseLacks(FactionHQ hq, CommanderState state, VehicleDefinition definition, int perBase)
+    {
+        if (hq.GetUnitSupply(definition) > 0 || state.DefencePosts.Count == 0)
+        {
+            return false;
+        }
+
+        CountGuardByBase(hq, state);
+        for (int b = 0; b < guardCentres.Count; b++)
+        {
+            if (!guardFields[b])
+            {
+                continue;
+            }
+
+            int have = 0;
+            foreach (KeyValuePair<Unit, int> entry in state.Defenders)
+            {
+                if (entry.Key != null
+                    && ReferenceEquals(entry.Key.definition, definition)
+                    && GuardBaseOf(state, entry.Key, entry.Value) == b)
+                {
+                    have++;
+                }
+            }
+
+            if (have < perBase && CanBaseField(hq, guardCentres[b], definition))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>A depot at this base is at the level <paramref name="definition"/> needs.</summary>
+    private bool CanBaseField(FactionHQ hq, GlobalPosition centre, VehicleDefinition definition)
+    {
+        depotScratch.Clear();
+        CollectBaseDepots(hq, centre, depotScratch);
+        for (int i = 0; i < depotScratch.Count; i++)
+        {
+            if (CanField(depotScratch[i], definition))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Ground vehicles into the ring of the base each stands at, up to
+    /// <paramref name="perBase"/> a base.</summary>
+    private void RecruitDefenders(FactionHQ hq, CommanderState state, int perBase)
     {
         defenceCandidates.Clear();
         if (hq.factionUnits == null)
@@ -1859,9 +2208,14 @@ internal sealed partial class CommanderEnemyCommanderService
             }
         }
 
-        for (int i = 0; i < defenceCandidates.Count && state.Defenders.Count < target; i++)
+        for (int i = 0; i < defenceCandidates.Count; i++)
         {
-            state.Defenders[defenceCandidates[i]] = ChooseClusterPost(state, defenceCandidates[i]);
+            int b = GuardBaseAt(state, defenceCandidates[i]);
+            if (b >= 0 && guardGround[b] < perBase)
+            {
+                state.Defenders[defenceCandidates[i]] = ChooseClusterPost(state, defenceCandidates[i]);
+                guardGround[b]++;
+            }
         }
     }
 
@@ -1870,6 +2224,42 @@ internal sealed partial class CommanderEnemyCommanderService
     /// reserve half matters: a purchase takes a depot cooldown to reach the field, and counting only
     /// what is standing there buys another launcher on every review until the first one arrives.
     /// </summary>
+    private int CountReserveSamLaunchers(FactionHQ hq)
+    {
+        int count = 0;
+        for (int i = 0; i < rosterParts.Count; i++)
+        {
+            if (IsSamSiteLauncher(rosterParts[i]))
+            {
+                count += hq.GetUnitSupply(rosterParts[i]);
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>A site short of <see cref="LaunchersPerSamSite"/> whose base has a depot that can
+    /// field the launcher the commander would buy. Reads <see cref="siteLaunchers"/>.</summary>
+    private bool HasSiteWantingLauncher(FactionHQ hq, CommanderState state, int sites)
+    {
+        VehicleDefinition? launcher = ChooseSamLauncherUnit(float.MaxValue);
+        if (launcher == null)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < sites && i < state.DefencePosts.Count; i++)
+        {
+            VehicleDepot? depot = siteLaunchers[i] < LaunchersPerSamSite ? FindSiteDepot(hq, state.DefencePosts[i]) : null;
+            if (depot != null && CanField(depot, launcher))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private int CountSamLaunchers(FactionHQ hq)
     {
         int count = 0;
@@ -1930,10 +2320,9 @@ internal sealed partial class CommanderEnemyCommanderService
         return count;
     }
 
-    /// <summary>Puts free air-defence vehicles into the ring until it holds <paramref name="airTarget"/>,
-    /// even past the ring's size: <see cref="ReleaseSurplusDefenders"/> then hands back ground vehicles.
-    /// Radar-guided launchers come first and are exempt from that target, see below.</summary>
-    private void RecruitAirDefence(FactionHQ hq, CommanderState state, int airTarget)
+    /// <summary>Puts free air-defence vehicles into the ring of the base each stands at: launchers
+    /// onto that base's SAM sites, the rest onto its posts.</summary>
+    private void RecruitAirDefence(FactionHQ hq, CommanderState state)
     {
         if (hq.factionUnits == null)
         {
@@ -1943,7 +2332,7 @@ internal sealed partial class CommanderEnemyCommanderService
         // Launchers first, and over the target if it comes to that. A radar-guided launcher that is
         // not in the guard is not merely idle: nothing pins it, so CheckObstacles drives the most
         // expensive vehicle the commander owns at the player on its own. The ring's own cap in
-        // ReviewDefence already refuses to release below CountAirDefenders, so this holds.
+        // ReleaseSurplusDefenders never hands back air defence, so this holds.
         // Launchers do not count toward airTarget: they are extra, so the site keeps its other air
         // defence however many StratoLances stand on it. Each goes straight to a site with room.
         int sites = SamSiteCount(state);
@@ -1956,16 +2345,12 @@ internal sealed partial class CommanderEnemyCommanderService
                 && !state.Defenders.ContainsKey(unit))
             {
                 int site = ChooseSamSite(state, sites, unit);
-                if (site < 0)
+                if (site >= 0)
                 {
-                    break;
+                    state.Defenders[unit] = SamSitePost + site;
                 }
-
-                state.Defenders[unit] = SamSitePost + site;
             }
         }
-
-        int held = CountAirDefenders(state) - CountRingLaunchers(state);
 
         // The AFV8 Mobile Air Defense and Linebreaker SAM serve both jobs, and the ring has room for
         // every one, so it leaves the convoys the escorts they want first. The rest always join it:
@@ -1987,33 +2372,29 @@ internal sealed partial class CommanderEnemyCommanderService
             }
         }
 
-        // Counter-battery mounts first, then the rest of the air defence. The target above is raised
-        // by exactly the number of those the commander owns, so taking them last would let ordinary
-        // launchers fill the room made for them and leave the anti-rocket mounts roaming.
-        for (int pass = 0; pass < 2; pass++)
+        // Every other air-defence vehicle joins the ring of the base it stands at, past the quota if
+        // it comes to that: out of the ring nothing pins it.
+        foreach (PersistentID id in hq.factionUnits)
         {
-            foreach (PersistentID id in hq.factionUnits)
+            if (id.TryGetUnit(out Unit unit)
+                && unit is GroundVehicle
+                && !unit.disabled
+                && DefencePriority(unit) > 0
+                && !IsSamSiteLauncher(unit)
+                && !state.Defenders.ContainsKey(unit))
             {
-                // Over the target only for air defence on an island: it cannot go anywhere else, and
-                // left out of the guard it stood at the depot door it rolled out of.
-                if (id.TryGetUnit(out Unit unit)
-                    && unit is GroundVehicle
-                    && !unit.disabled
-                    && DefencePriority(unit) > 0
-                    && (pass > 0 || IsCounterBatteryDefence(unit) || IsStaticAirDefence(unit))
-                    && !state.Defenders.ContainsKey(unit))
+                bool escort = IsConvoyAirDefence(unit);
+                bool spaag = IsConvoySpaag(unit);
+                int b = GuardBaseAt(state, unit);
+                if (b >= 0
+                    && (!escort || spareEscorts > 0)
+                    && (!spaag || spareSpaags > 0)
+                    && IsRecruitable(hq, unit))
                 {
-                    bool escort = IsConvoyAirDefence(unit);
-                    bool spaag = IsConvoySpaag(unit);
-                    if ((escort ? spareEscorts > 0 : held < airTarget || IsIslandAt(GetHomeBase(state, unit)) || IsStaticAirDefence(unit))
-                        && (!spaag || spareSpaags > 0)
-                        && IsRecruitable(hq, unit))
-                    {
-                        state.Defenders[unit] = ChooseClusterPost(state, unit);
-                        held++;
-                        spareEscorts -= escort ? 1 : 0;
-                        spareSpaags -= spaag ? 1 : 0;
-                    }
+                    state.Defenders[unit] = ChooseClusterPost(state, unit);
+                    guardAir[b] += IsExtraLads(unit) ? 0 : 1;
+                    spareEscorts -= escort ? 1 : 0;
+                    spareSpaags -= spaag ? 1 : 0;
                 }
             }
         }
@@ -2061,10 +2442,10 @@ internal sealed partial class CommanderEnemyCommanderService
     }
 
     /// <summary>
-    /// The site a new launcher joins, always at the base it rolled out at: a started site short of
+    /// The site a new launcher joins, only ever at the base it stands at: a started site short of
     /// <see cref="SamSiteFillLaunchers"/>, then a new one, then a fourth on the emptiest filled one, then
     /// crowding a full one. Crowding beats refusing: an unassigned launcher is unpinned and drives at the
-    /// player. -1 only with no posts laid.
+    /// player. -1 with no site at that base.
     /// </summary>
     private int ChooseSamSite(CommanderState state, int sites, Unit unit)
     {
@@ -2075,28 +2456,17 @@ internal sealed partial class CommanderEnemyCommanderService
 
         CountSiteParts(state, sites);
         GlobalPosition home = GetHomeBase(state, unit);
-        GlobalPosition at = unit.transform.GlobalPosition();
         int best = -1;
-        bool bestAtHome = false;
         for (int i = 0; i < sites; i++)
         {
-            bool atHome = IsPostAt(state, i, home);
-            if (best >= 0 && bestAtHome && !atHome)
-            {
-                continue;
-            }
-
-            if (best < 0
-                || (atHome && !bestAtHome)
-                || SiteFillRank(siteLaunchers[i]) < SiteFillRank(siteLaunchers[best])
-                || (SiteFillRank(siteLaunchers[i]) == SiteFillRank(siteLaunchers[best])
-                    && siteLaunchers[i] > 0
-                    && siteLaunchers[i] < siteLaunchers[best])
-                || (siteLaunchers[i] == siteLaunchers[best]
-                    && IsCloserBase(state.DefencePosts[i], state.DefencePosts[best], home, at, state.DefencePostBases[i], state.DefencePostBases[best])))
+            if (IsPostAt(state, i, home)
+                && (best < 0
+                    || SiteFillRank(siteLaunchers[i]) < SiteFillRank(siteLaunchers[best])
+                    || (SiteFillRank(siteLaunchers[i]) == SiteFillRank(siteLaunchers[best])
+                        && siteLaunchers[i] > 0
+                        && siteLaunchers[i] < siteLaunchers[best])))
             {
                 best = i;
-                bestAtHome = atHome;
             }
         }
 
@@ -2104,10 +2474,9 @@ internal sealed partial class CommanderEnemyCommanderService
     }
 
     /// <summary>
-    /// The post a new ring defender joins: the first short of <see cref="DefendersPerPost"/>, in the
-    /// order the posts were laid (forward posts first), at the base with the fewest defenders, else
-    /// the nearest post with room anywhere, else the emptiest at home. Preferring the home base keeps
-    /// guards from crossing the map.
+    /// The post a new ring defender joins, only ever at the base it stands at: the emptiest there,
+    /// the lowest (forward) one on a tie, so the guard goes round the whole base. Stationary air
+    /// defence crowds a full ring rather than go anywhere.
     /// </summary>
     private int ChooseClusterPost(CommanderState state, Unit unit)
     {
@@ -2118,123 +2487,23 @@ internal sealed partial class CommanderEnemyCommanderService
         }
 
         CountPostOccupancy(state, includeSupport: false);
-        CountBaseOccupancy(state);
         GlobalPosition home = GetHomeBase(state, unit);
-        GlobalPosition at = unit.transform.GlobalPosition();
-
-        // Stationary air defence stays at the base it rolled out at, crowding a full ring if it has to.
-        if (IsStaticAirDefence(unit))
-        {
-            int own = -1;
-            for (int i = 0; i < posts; i++)
-            {
-                if (IsPostAt(state, i, home) && (own < 0 || postOccupancy[i] < postOccupancy[own]))
-                {
-                    own = i;
-                }
-            }
-
-            if (own >= 0)
-            {
-                return own;
-            }
-        }
-
-        // The base with the fewest defenders, its own base on a tie, then the nearest. Its own base
-        // outright left every base without a working depot unguarded: the enemy's vehicles roll out
-        // of one or two bases, and those filled their rings and the half-the-army cap between them.
-        int target = -1;
-        for (int b = 0; b < baseCentres.Count; b++)
-        {
-            if (!CanDriveBetween(home, baseCentres[b]))
-            {
-                continue;
-            }
-
-            if (target < 0
-                || baseCounts[b] < baseCounts[target]
-                || (baseCounts[b] == baseCounts[target] && IsCloserBase(baseCentres[b], baseCentres[target], home, at)))
-            {
-                target = b;
-            }
-        }
-
-        // The emptiest post at that base, the lowest (forward) one on a tie, so the guard goes round
-        // the whole base. The first post with room filled the two forward posts and one ring post
-        // and left the rest of the ring empty.
         int emptiest = -1;
-        for (int i = 0; i < posts && target >= 0; i++)
+        for (int i = 0; i < posts; i++)
         {
-            if (postOccupancy[i] < DefendersPerPost
-                && IsPostAt(state, i, baseCentres[target])
-                && (emptiest < 0 || postOccupancy[i] < postOccupancy[emptiest]))
+            if (IsPostAt(state, i, home) && (emptiest < 0 || postOccupancy[i] < postOccupancy[emptiest]))
             {
                 emptiest = i;
             }
         }
 
-        if (emptiest >= 0)
-        {
-            return emptiest;
-        }
-
-        int nearest = -1;
-        float nearestDistance = float.MaxValue;
-        for (int i = 0; i < posts; i++)
-        {
-            float distance = FastMath.Distance(at, state.DefencePosts[i]);
-            if (postOccupancy[i] < DefendersPerPost && distance < nearestDistance
-                && i < state.DefencePostBases.Count && CanDriveBetween(home, state.DefencePostBases[i]))
-            {
-                nearestDistance = distance;
-                nearest = i;
-            }
-        }
-
-        if (nearest < 0 && IsIslandAt(home))
-        {
-            // Every post on its island is full: crowd the island's own posts rather than pick one
-            // across the water it can never reach.
-            for (int i = 0; i < posts && i < state.DefencePostBases.Count; i++)
-            {
-                float distance = FastMath.Distance(at, state.DefencePosts[i]);
-                if (distance < nearestDistance && CanDriveBetween(home, state.DefencePostBases[i]))
-                {
-                    nearestDistance = distance;
-                    nearest = i;
-                }
-            }
-        }
-
-        return nearest >= 0 ? nearest : ChooseEmptiestPost(state, unit);
-    }
-
-    /// <summary>Ring defenders at each base (<see cref="baseCentres"/>), from <see cref="postOccupancy"/>.</summary>
-    private void CountBaseOccupancy(CommanderState state)
-    {
-        baseCentres.Clear();
-        baseCounts.Clear();
-        for (int i = 0; i < state.DefencePosts.Count && i < state.DefencePostBases.Count; i++)
-        {
-            int b = baseCentres.Count - 1;
-            while (b >= 0 && !CommanderGameAccess.ApproximatelyEqual(baseCentres[b], state.DefencePostBases[i], 1f))
-            {
-                b--;
-            }
-
-            if (b < 0)
-            {
-                baseCentres.Add(state.DefencePostBases[i]);
-                baseCounts.Add(0);
-                b = baseCentres.Count - 1;
-            }
-
-            baseCounts[b] += postOccupancy[i];
-        }
+        return Mathf.Max(emptiest, 0);
     }
 
     /// <summary>
-    /// Logs the guard at each base when it changes, at most once a minute.
+    /// Logs each base's own guard when it changes, at most once a minute: ground and air defence
+    /// against the base's quota, its SAM launchers, how many of all those are on the base rather
+    /// than still on the road, and whether it has a depot to field more.
     /// </summary>
     private void ReportGuard(FactionHQ hq, CommanderState state)
     {
@@ -2243,27 +2512,28 @@ internal sealed partial class CommanderEnemyCommanderService
             return;
         }
 
-        CountPostOccupancy(state, includeSupport: false);
-        CountBaseOccupancy(state);
+        CountGuardByBase(hq, state);
         guardReport.Clear();
-        foreach (Airbase airbase in hq.GetAirbases())
+        for (int b = 0; b < guardCentres.Count; b++)
         {
-            if (airbase == null || airbase.center == null || !CommanderGameAccess.IsLandBase(airbase))
+            int launchers = 0;
+            int there = 0;
+            foreach (KeyValuePair<Unit, int> entry in state.Defenders)
             {
-                continue;
-            }
-
-            int count = 0;
-            for (int b = 0; b < baseCentres.Count; b++)
-            {
-                if (CommanderGameAccess.ApproximatelyEqual(baseCentres[b], airbase.center.GlobalPosition(), 1f))
+                if (entry.Key != null && GuardBaseOf(state, entry.Key, entry.Value) == b)
                 {
-                    count = baseCounts[b];
+                    launchers += IsSamSiteLauncher(entry.Key) ? 1 : 0;
+                    there += FastMath.InRange(entry.Key.transform.GlobalPosition(), guardCentres[b], RecruitRadiusMeters) ? 1 : 0;
                 }
             }
 
-            guardReport.Append(guardReport.Length == 0 ? string.Empty : ", ")
-                .Append(CommanderCaptureService.GetAirbaseLabel(airbase)).Append(' ').Append(count);
+            guardReport.Append(guardReport.Length == 0 ? string.Empty : "; ")
+                .Append(CommanderCaptureService.GetAirbaseLabel(guardBases[b]))
+                .Append(": ground ").Append(guardGround[b]).Append('/').Append(state.GroundPerBase)
+                .Append(", air ").Append(guardAir[b]).Append('/').Append(state.AirPerBase)
+                .Append(", SAM ").Append(launchers)
+                .Append(", ").Append(there).Append(" on base")
+                .Append(guardFields[b] ? string.Empty : ", NO DEPOT");
         }
 
         string report = guardReport.ToString();
@@ -2271,7 +2541,7 @@ internal sealed partial class CommanderEnemyCommanderService
         {
             state.LastGuardReport = report;
             state.NextGuardReportAt = Time.time + 60f;
-            CommanderPlugin.Log.LogInfo($"Enemy commander ({hq.faction.name}) home guard by base: {report}.");
+            CommanderPlugin.Log.LogInfo($"Enemy commander ({hq.faction.name}) guard by base: {report}.");
         }
     }
 

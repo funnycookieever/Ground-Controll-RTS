@@ -111,6 +111,12 @@ internal static class CommanderCapturePatches
         highestHQ = null;
         Contested.Remove(__instance);
         Recovering.Remove(__instance);
+        if (CommanderSettings.DisableCapture)
+        {
+            __result = 0f;
+            return false;
+        }
+
         CountUnits(target, out int totalCount, out float totalStrength);
 
         FactionHQ? owner = target.CurrentHQ;

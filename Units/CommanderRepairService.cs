@@ -76,6 +76,7 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
 
     private readonly List<Unit> staleVehicles = new();
     private readonly HashSet<Unit> nearestTargetUnits = new();
+    private readonly HashSet<Unit> repairOffUnits = new();
 
     // Builders the player told to wait where their last build finished instead of driving home.
     private readonly HashSet<Unit> stayAfterBuildUnits = new();
@@ -186,6 +187,7 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
     public void ResetSession()
     {
         nearestTargetUnits.Clear();
+        repairOffUnits.Clear();
         stayAfterBuildUnits.Clear();
         crewAssignments.Clear();
         damagedBuildings.Clear();
@@ -281,7 +283,14 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
         return unit != null && nearestTargetUnits.Contains(unit);
     }
 
-    internal void ToggleNearestTarget(Unit unit)
+    /// <summary>Repair switched off: the vehicle only ever builds blueprints.</summary>
+    internal bool IsRepairOff(Unit? unit)
+    {
+        return unit != null && repairOffUnits.Contains(unit);
+    }
+
+    /// <summary>Cycles PRIORITY → NEAREST → OFF → PRIORITY.</summary>
+    internal void CycleRepairMode(Unit unit)
     {
         Repairer? repairer = GetRepairer(unit);
         if (repairer == null)
@@ -289,19 +298,26 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
             return;
         }
 
-        bool enabled = !nearestTargetUnits.Remove(unit);
-        if (enabled)
+        bool nearest = false;
+        bool off = false;
+        if (nearestTargetUnits.Remove(unit))
         {
-            nearestTargetUnits.Add(unit);
+            off = repairOffUnits.Add(unit);
+        }
+        else if (!repairOffUnits.Remove(unit))
+        {
+            nearest = nearestTargetUnits.Add(unit);
         }
 
         // The repair search runs on the host; a guest's toggle is only a label without this.
-        CommanderNetwork.Forward("repair.nearest", CommanderNetwork.Id(unit), CommanderNetwork.Flag(enabled));
+        CommanderNetwork.Forward("repair.nearest", CommanderNetwork.Id(unit), CommanderNetwork.Flag(nearest), CommanderNetwork.Flag(off));
 
         CommanderRepairPatches.RequestImmediateSearch(repairer);
-        SetStatus(enabled
-            ? "Repair targeting set to nearest damaged structure."
-            : "Repair targeting restored to Basegame priority.");
+        SetStatus(off
+            ? "Repair off: this vehicle only builds blueprints."
+            : nearest
+                ? "Repair targeting set to nearest damaged structure."
+                : "Repair targeting restored to Basegame priority.");
     }
 
     internal bool StaysAfterBuild(Unit? unit)
@@ -801,6 +817,15 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
         else
         {
             nearestTargetUnits.Remove(unit);
+        }
+
+        if (CommanderNetwork.Bool(args, 3))
+        {
+            repairOffUnits.Add(unit);
+        }
+        else
+        {
+            repairOffUnits.Remove(unit);
         }
 
         Repairer? repairer = GetRepairer(unit);

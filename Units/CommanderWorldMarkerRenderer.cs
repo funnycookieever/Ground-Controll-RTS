@@ -25,6 +25,7 @@ internal sealed class CommanderWorldMarkerRenderer
     /// <summary>Terrain-following ring per store, sampled once: a building does not move, and a
     /// sample is a raycast per point.</summary>
     private static readonly Dictionary<Unit, GlobalPosition[]> ResupplyRings = new();
+    private static readonly GlobalPosition[] MobileRingPoints = new GlobalPosition[72];
 
     private readonly CommanderSelectionService selectionService;
     private readonly CommanderMoveService moveService;
@@ -84,6 +85,7 @@ internal sealed class CommanderWorldMarkerRenderer
         CommanderCockpitMarkerUi.DrawCommanderView(camera, IsSceneHiddenByMap);
         DrawCaptureTargets(camera);
         DrawRepairCountdowns(camera);
+        DrawShieldCountdowns(camera, selectionService.SelectedUnits);
         CommanderRadarExposure.Draw();
 
         // An enemy can be selected to inspect it, but its orders (the AI commander's capture runs)
@@ -230,13 +232,70 @@ internal sealed class CommanderWorldMarkerRenderer
         }
     }
 
-    /// <summary>A munitions bunker or an ammo dump: the stores a unit parked beside rearms from.</summary>
+    /// <summary>A shield bubble that is down, with how long until it is back, like a repair.</summary>
+    private static void DrawShieldCountdowns(Camera camera, IReadOnlyList<Unit> selected)
+    {
+        if (IsSceneHiddenByMap)
+        {
+            return;
+        }
+
+        for (int i = 0; i < CommanderLeviathanShieldService.Count; i++)
+        {
+            if (!CommanderLeviathanShieldService.TryGetState(i, out Unit unit, out float health, out float max, out float seconds, out bool switchedOff))
+            {
+                continue;
+            }
+
+            string label;
+            if (switchedOff)
+            {
+                label = "SHIELD OFF";
+            }
+            else if (health <= 0f)
+            {
+                int whole = Mathf.CeilToInt(seconds);
+                label = $"SHIELD DOWN  {whole / 60}:{whole % 60:00}";
+            }
+            else if (IsSelected(selected, unit))
+            {
+                // A live bubble only shows its points on the unit the player has selected.
+                label = $"SHIELD  {Mathf.CeilToInt(health)} / {Mathf.CeilToInt(max)}";
+            }
+            else
+            {
+                continue;
+            }
+
+            GlobalPosition above = unit.GlobalPosition() + (Vector3.up * (unit.definition.height + 30f));
+            DrawWorldPoint(camera, above, label, RepairColor, 30f);
+        }
+    }
+
+    private static bool IsSelected(IReadOnlyList<Unit> selected, Unit unit)
+    {
+        for (int i = 0; i < selected.Count; i++)
+        {
+            if (ReferenceEquals(selected[i], unit))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>A munitions bunker, an ammo dump or a munitions truck: the stores a unit parked beside rearms from.</summary>
     private static bool IsResupplyStore(Unit unit)
     {
-        return unit is Building
-            && CommanderSupplyStoreService.GetRearmer(unit) != null
-            && (CommanderSupplyStoreService.IsDump(unit)
-                || (unit.definition is BuildingDefinition building && building.buildingType == BuildingType.AMMO));
+        if (CommanderSupplyStoreService.GetRearmer(unit) == null)
+        {
+            return false;
+        }
+
+        return CommanderSupplyStoreService.IsMobileStore(unit)
+            || CommanderSupplyStoreService.IsDump(unit)
+            || (unit.definition is BuildingDefinition building && building.buildingType == BuildingType.AMMO);
     }
 
     /// <summary>
@@ -246,12 +305,14 @@ internal sealed class CommanderWorldMarkerRenderer
     /// </summary>
     private static void DrawResupplyRing(Camera camera, Unit store)
     {
-        if (!ResupplyRings.TryGetValue(store, out GlobalPosition[] points))
+        // A truck moves, so its ring is rebuilt every frame; a building's never changes and is cached.
+        bool mobile = store is not Building;
+        if (mobile || !ResupplyRings.TryGetValue(store, out GlobalPosition[] points))
         {
             Rearmer? rearmer = CommanderSupplyStoreService.GetRearmer(store);
             float reach = Mathf.Max(rearmer != null ? rearmer.Range : 0f, CommanderMoveService.GroundRearmReachMeters);
             GlobalPosition centre = rearmer != null ? rearmer.GetPosition() : store.GlobalPosition();
-            points = new GlobalPosition[72];
+            points = mobile ? MobileRingPoints : new GlobalPosition[72];
             for (int i = 0; i < points.Length; i++)
             {
                 float angle = i * Mathf.PI * 2f / points.Length;
@@ -265,7 +326,10 @@ internal sealed class CommanderWorldMarkerRenderer
                 points[i] = new GlobalPosition(ground.x, Mathf.Max(CommanderBuildPreview.GetSurfaceY(ground, overUnits: true), 0f) + 3f, ground.z);
             }
 
-            ResupplyRings[store] = points;
+            if (!mobile)
+            {
+                ResupplyRings[store] = points;
+            }
         }
 
         CommanderTacticalMapService? map = CommanderTacticalMapService.Instance;
@@ -654,8 +718,7 @@ internal sealed class CommanderWorldMarkerRenderer
             {
                 // The base game shows capture progress nowhere outside its debug overlay, so
                 // without this a squad standing in the ring looks like a squad doing nothing.
-                bool ours = target.CapturingHq == null
-                    || ReferenceEquals(target.CapturingHq, CommanderGameAccess.GetLocalHq());
+                bool ours = target.IsCapturedBy(CommanderGameAccess.GetLocalHq());
                 color = ours ? CapturingBaseColor : LosingBaseColor;
 
                 // "CONTESTED" is a stalemate in the ring; an enemy taking the base is a moving bar.

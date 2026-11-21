@@ -75,6 +75,7 @@ public sealed class CommanderPlugin : BaseUnityPlugin
         CommanderCameraTuning.SelfCheck();
         CommanderSupplyStoreService.SelfCheck();
         CommanderAirCommandService.SelfCheck();
+        CommanderLeviathanDeepService.SelfCheck();
         CommanderTerrainRouteService.SelfCheck();
         CommanderRepairRatePatches.SelfCheck();
         CommanderDraftService.SelfCheck();

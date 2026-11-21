@@ -25,14 +25,56 @@ internal static class CommanderFactionVehiclePatches
     /// <summary>
     /// The mission's free air force: a random airframe out of the reserve every tick, up to
     /// <c>AIAircraftLimit</c>. With friendly AI off the local side launches only what the commander does.
+    /// On GC missions <see cref="CommanderFreeAiPilots"/> flies them instead, free of stock, and
+    /// friendly AI off does not stop them: the lobby slider is the switch for those.
     /// </summary>
     [HarmonyPatch(typeof(FactionHQ), "DeployAIAircraft")]
     [HarmonyPrefix]
     private static bool DeployAIAircraftPrefix(FactionHQ __instance)
     {
-        return !CommanderFactionVehicleService.IsFriendlyAiOff(__instance)
-            && !CommanderUnitCap.IsFull(__instance, tellPlayer: false)
-            && !CommanderUnitCap.IsAircraftFull(__instance);
+        if ((!CommanderEnemyCommanderService.IsDuelMission && CommanderFactionVehicleService.IsFriendlyAiOff(__instance))
+            || CommanderUnitCap.IsFull(__instance, tellPlayer: false)
+            || CommanderUnitCap.IsAircraftFull(__instance))
+        {
+            CommanderFreeAiPilots.LogBlocked(__instance);
+            return false;
+        }
+
+        if (!CommanderEnemyCommanderService.IsDuelMission)
+        {
+            return true;
+        }
+
+        CommanderFreeAiPilots.Deploy(__instance);
+        return false;
+    }
+
+    [HarmonyPatch(typeof(Unit), nameof(Unit.ReportKilled))]
+    [HarmonyPostfix]
+    private static void ReportKilledPostfix(Unit __instance, Dictionary<PersistentID, float>? ___damageCredit)
+    {
+        CommanderFreeAiPilots.NotifyKilled(__instance, ___damageCredit);
+    }
+
+    [HarmonyPatch(typeof(FactionHQ), "DistributeFunds")]
+    [HarmonyPostfix]
+    private static void DistributeFundsPostfix(FactionHQ __instance)
+    {
+        CommanderFreeAiPilots.NotifyFundsDistributed(__instance);
+    }
+
+    [HarmonyPatch(typeof(Unit), "OnStartServer")]
+    [HarmonyPrefix]
+    private static void UnitStartServerPrefix(Unit __instance)
+    {
+        CommanderFreeAiPilots.NotifyFactionUnitRegistered(__instance.NetworkHQ, __instance);
+    }
+
+    [HarmonyPatch(typeof(FactionHQ), nameof(FactionHQ.RegisterFactionUnit))]
+    [HarmonyPostfix]
+    private static void RegisterFactionUnitPostfix(FactionHQ __instance, Unit unit)
+    {
+        CommanderFreeAiPilots.NotifyFactionUnitRegistered(__instance, unit);
     }
 
     [HarmonyPatch(typeof(FactionHQ), "DeployVehicles")]
@@ -66,10 +108,29 @@ internal static class CommanderFactionVehiclePatches
             return false;
         }
 
-        if (CommanderEnemyCommanderService.HoldsArtilleryAt(__instance!, vehicleDefinition)
-            || CommanderEnemyCommanderService.HoldsSamLauncherAt(__instance!, vehicleDefinition)
-            || CommanderEnemyCommanderService.HoldsSiteTruckAt(__instance!, vehicleDefinition)
-            || CommanderEnemyCommanderService.HoldsAssaultAtIsland(__instance!, vehicleDefinition))
+        // The AI commander's routing (artillery, SAM and site trucks to its chosen depot, assault off
+        // islands) is for its own reserve roll-out. A player's queue on an AI-commanded side (AI
+        // COMMANDERS: BOTH) calls straight in, and held there it waited at the head for ever.
+        bool automatic = CommanderFactionVehicleService.AutomaticDeploymentHq != null;
+        if (automatic
+            && (CommanderEnemyCommanderService.HoldsArtilleryAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsSamLauncherAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsAirDefenceAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsSiteTruckAt(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsAssaultAtIsland(__instance!, vehicleDefinition)
+                || CommanderEnemyCommanderService.HoldsConvoyAtRear(__instance!, vehicleDefinition)))
+        {
+            __result = false;
+            return false;
+        }
+
+        // The queue checks the tier, but the game deploys reserve units through here on its own.
+        // The AI buys by its best depot, so a low depot refusing here lets DeployVehicles offer the
+        // unit to the next depot in turn, until the one at the right tier takes it.
+        if (CommanderEconomyService.Instance != null
+            && !CommanderDraftService.IsDraftMission
+            && CommanderEconomyService.GetDepotLevel(CommanderGameAccess.GetDepotOwner(__instance))
+                < CommanderEconomyService.GetRequiredDepotLevel(vehicleDefinition))
         {
             __result = false;
             return false;
@@ -94,8 +155,9 @@ internal static class CommanderFactionVehiclePatches
 
         // An AI side leaves a third of the cap for its aircraft and ships, and fields no more than
         // 60% of it in one vehicle. Either way the vehicle waits in the reserve.
-        if ((CommanderUnitCap.IsAiSide(hq) && CommanderUnitCap.IsGroundFull(hq))
-            || CommanderUnitCap.IsAiTypeFull(hq, vehicleDefinition))
+        if (automatic
+            && ((CommanderUnitCap.IsAiSide(hq) && CommanderUnitCap.IsGroundFull(hq))
+                || CommanderUnitCap.IsAiTypeFull(hq, vehicleDefinition)))
         {
             __result = false;
             return false;

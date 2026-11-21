@@ -224,7 +224,7 @@ internal sealed partial class CommanderOverlayUi
         if (hint.Length > 0)
         {
             float hintWidth = Mathf.Min(640f, CommanderUiTheme.Label.CalcSize(new GUIContent(hint)).x + 40f);
-            topBarHintRect = new Rect(Mathf.Round((CommanderUiScale.Width - hintWidth) * 0.5f), topBarRect.yMax + 8f, hintWidth, 30f);
+            topBarHintRect = new Rect(Mathf.Round((CommanderUiScale.Width - hintWidth) * 0.5f), Mathf.Max(topBarRect.yMax, CommanderLeviathanUi.BottomY) + 8f, hintWidth, 30f);
             GUI.Box(topBarHintRect, string.Empty, CommanderUiTheme.Toast);
             GUI.Label(new Rect(topBarHintRect.x + 14f, topBarHintRect.y, topBarHintRect.width - 28f, topBarHintRect.height), hint, CommanderUiTheme.Label);
         }

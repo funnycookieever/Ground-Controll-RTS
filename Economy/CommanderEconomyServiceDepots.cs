@@ -16,6 +16,9 @@ internal sealed partial class CommanderEconomyService
 {
     internal const int DepotMaxLevel = 3;
 
+    /// <summary>Two depots this close are at the same base, for the enemy's upgrade order.</summary>
+    internal const float EnemyDepotBaseMeters = 3000f;
+
     /// <summary>The mod's own price per unit name, before the player's profile: the PRICES tab's DEFAULT column.</summary>
     internal static readonly Dictionary<string, float> ModPrices = new(StringComparer.Ordinal);
 
@@ -411,19 +414,50 @@ internal sealed partial class CommanderEconomyService
     /// </summary>
     private Unit? FindEnemyDepotToUpgrade(FactionHQ hq)
     {
+        // A base with no depot at level 2 first, so it can field its own StratoLances, Boltstrikes
+        // and MBTs. Then the highest below the top, so one depot climbs rather than several stopping
+        // at level 2.
         Unit? best = null;
-        int bestLevel = 0;
+        int bestRank = int.MinValue;
+        List<Unit> owned = new();
         foreach (VehicleDepot depot in Object.FindObjectsOfType<VehicleDepot>())
         {
             Unit? owner = depot == null ? null : CommanderGameAccess.GetDepotOwner(depot);
-            if (owner != null && !owner.disabled && owner.NetworkHQ == hq && !IsBuiltNavalDock(owner)
-                && GetDepotLevel(owner) > bestLevel)
+            if (owner != null && !owner.disabled && owner.NetworkHQ == hq && !IsBuiltNavalDock(owner))
             {
-                best = owner;
-                bestLevel = GetDepotLevel(owner);
+                owned.Add(owner);
             }
         }
 
-        return bestLevel < DepotMaxLevel ? best : null;
+        for (int i = 0; i < owned.Count; i++)
+        {
+            int level = GetDepotLevel(owned[i]);
+            if (level >= DepotMaxLevel)
+            {
+                continue;
+            }
+
+            bool baseUpgraded = false;
+            for (int j = 0; j < owned.Count && !baseUpgraded; j++)
+            {
+                baseUpgraded = GetDepotLevel(owned[j]) >= 2
+                    && FastMath.InRange(owned[j].GlobalPosition(), owned[i].GlobalPosition(), EnemyDepotBaseMeters);
+            }
+
+            int rank = (baseUpgraded ? 0 : DepotMaxLevel) + level;
+            if (rank > bestRank)
+            {
+                bestRank = rank;
+                best = owned[i];
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>A base without a level-2 depot is one the next upgrade goes to and is saved for.</summary>
+    private bool HasBaseWithoutUpgradedDepot(FactionHQ hq)
+    {
+        return FindEnemyDepotToUpgrade(hq) is Unit next && GetDepotLevel(next) < 2;
     }
 }

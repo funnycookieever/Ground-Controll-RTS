@@ -955,6 +955,19 @@ internal sealed partial class CommanderAirCommandService
         }
 
         TaxiStoodSince.Remove(aircraft);
+
+        // Stopped mid-runway (a runway crossing) it can never be lined up from there, the line-up moves
+        // it at most LineUpMaxMoveMeters, and parked in the queue it stands across that runway, blocking
+        // every other departure and lander. Not a failure of the type at this field: no NoteFailedTakeoff.
+        if (IsOnAnyRunway(aircraft, field) && !IsNearRunwayEnd(field, aircraft))
+        {
+            CommanderPlugin.Log.LogInfo(
+                $"{CommanderGameAccess.GetUnitLabel(aircraft)} stood {TaxiWaitGiveUpSeconds:0} s on a runway at "
+                    + $"{CommanderCaptureService.GetAirbaseLabel(field)} ('{taxi.stateDisplayName}'), too far from a threshold to line up; returned to stock.");
+            aircraft.ReturnToInventory();
+            return;
+        }
+
         CommanderPlugin.Log.LogInfo(
             $"{CommanderGameAccess.GetUnitLabel(aircraft)} stood {TaxiWaitGiveUpSeconds:0} s on the way to the runway at "
                 + $"{CommanderCaptureService.GetAirbaseLabel(field)} ('{taxi.stateDisplayName}'); lining it up instead.");

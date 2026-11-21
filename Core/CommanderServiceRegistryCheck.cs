@@ -45,7 +45,6 @@ internal static class CommanderServiceRegistryCheck
 
         if (failures.Count == 0)
         {
-            CommanderPlugin.Log.LogDebug("Service registry self-check passed.");
             return;
         }
 

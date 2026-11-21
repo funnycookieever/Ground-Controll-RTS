@@ -217,6 +217,18 @@ internal static class CommanderAirCommandPatches
             DestinationField);
     }
 
+    [HarmonyPatch(typeof(AIHeloLandingState), nameof(AIHeloLandingState.FixedUpdateState))]
+    [HarmonyPostfix]
+    private static void HeloLandingFixedUpdatePostfix(AIHeloLandingState __instance)
+    {
+        Vector3? pad = __instance.stateDisplayName == "waiting to land"
+            && HeloLandingPointField?.GetValue(__instance) is Airbase.VerticalLandingPoint point
+            && point.point != null
+                ? point.point.position
+                : null;
+        CommanderAirCommandService.TickHeloPadWait(__instance, GetStateAircraft(__instance), pad);
+    }
+
     [HarmonyPatch(typeof(CombatAI), nameof(CombatAI.LookForMissileTargets))]
     [HarmonyPostfix]
     private static void LookForMissileTargetsPostfix(Aircraft aircraft, WeaponStation weaponStation, List<Unit> outTargets)

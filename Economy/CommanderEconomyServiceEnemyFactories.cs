@@ -119,7 +119,7 @@ internal sealed partial class CommanderEconomyService
         if (price <= 0f
             || GetEnemyFactoryFund(hq) < price
             || hq.factionFunds < price
-            || CountBlueprints(hq) >= GetEnemyBlueprintLimit(hq)
+            || !HasAnyBlueprintRoom(hq)
             || !TryBuildEnemyFactory(hq))
         {
             return false;
