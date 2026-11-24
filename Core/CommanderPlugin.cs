@@ -10,6 +10,7 @@ namespace GroundControlRts;
 /// the <see cref="CommanderModeController"/> that is the RTS mode itself.
 /// </summary>
 [BepInPlugin(PluginInfo.Guid, PluginInfo.Name, PluginInfo.Version)]
+[BepInDependency(CommanderFactionsBridge.PluginId, BepInDependency.DependencyFlags.SoftDependency)]
 [SuppressMessage("Usage", "CA2243:Attribute string literals should parse correctly", Justification = "A BepInEx plugin GUID is a reverse-DNS name, not a System.Guid; changing it renames the player's config file.")]
 [SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "Unity owns a plugin's lifetime; OnDestroy unpatches Harmony.")]
 public sealed class CommanderPlugin : BaseUnityPlugin
@@ -81,6 +82,7 @@ public sealed class CommanderPlugin : BaseUnityPlugin
         CommanderDraftService.SelfCheck();
         CommanderUnitBanService.SelfCheck();
         CommanderPingService.SelfCheck();
+        CommanderFactionsBridge.Hook();
         CommanderMapSettings.SelfCheck();
         modeController = gameObject.AddComponent<CommanderModeController>();
         Log.LogInfo($"{PluginInfo.Name} {PluginInfo.Version} loaded.");

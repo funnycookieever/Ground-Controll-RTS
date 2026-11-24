@@ -11,7 +11,7 @@ namespace GroundControlRts;
 /// <c>AIHeloTakeoffState.FixedUpdateState</c> hands over to <c>AIHeloCombatState</c> once
 /// <c>radarAlt</c> passes 20 m, and <c>Aircraft.CheckRadarAlt</c> measures to <c>ShipsMask</c> too,
 /// so on a carrier that is 20 m above the deck, under the top of the island: the Ibis turned for its
-/// target and flew into its own carrier (user, 2026-11-06). Refusing the <c>SwitchState</c> instead
+/// target and flew into its own carrier. Refusing the <c>SwitchState</c> instead
 /// would skip the state's <c>Hover</c> call that frame (see Supply's <c>TakeoffStateExitMeters</c>),
 /// so the state is shown a radar altitude just under its 20 m for the call and runs its own climb.
 /// </remarks>

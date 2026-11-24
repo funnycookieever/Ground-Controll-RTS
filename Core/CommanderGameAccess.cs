@@ -330,14 +330,24 @@ internal static class CommanderGameAccess
         return GameAssets.i != null ? GameAssets.i.HUDFriendlySelected : Color.cyan;
     }
 
-    internal static Color GetHostileColor()
+    // With more than two factions (Ground Control Factions) "enemy" is several sides, so an enemy
+    // wears its own faction's colour, the same one the game's map gives it there. Two sides: red.
+    internal static Color GetHostileColor(Unit unit)
     {
-        return GameAssets.i != null ? GameAssets.i.HUDHostile : Color.red;
+        Faction? faction = GetMultiFactionEnemy(unit);
+        return faction != null ? faction.color : GameAssets.i != null ? GameAssets.i.HUDHostile : Color.red;
     }
 
-    internal static Color GetSelectedHostileColor()
+    internal static Color GetSelectedHostileColor(Unit unit)
     {
-        return GameAssets.i != null ? GameAssets.i.HUDHostileSelected : new Color(1f, 0.45f, 0.25f);
+        Faction? faction = GetMultiFactionEnemy(unit);
+        return faction != null ? faction.selectedColor : GameAssets.i != null ? GameAssets.i.HUDHostileSelected : new Color(1f, 0.45f, 0.25f);
+    }
+
+    internal static Faction? GetMultiFactionEnemy(Unit unit)
+    {
+        FactionHQ? hq = unit != null ? unit.NetworkHQ : null;
+        return FactionRegistry.HQLookup.Count > 2 && hq != null ? hq.faction : null;
     }
 
     internal static float GetBaseScale(Unit unit)

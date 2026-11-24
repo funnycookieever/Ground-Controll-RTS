@@ -265,8 +265,9 @@ internal static class CommanderAreaFire
 
         foreach (AreaOrder order in Orders.Values)
         {
+            // A launcher's attack order is locked on its target, not shelling an area: no ring.
             MapArea area = order.Area;
-            if (area.Shown && map != null)
+            if (area.Shown && map != null && order.Target is null)
             {
                 area.Visual = CommanderAirCommandService.EnsureMapRadiusVisual(area.Visual, map, area.Center, VisibleRadius(map, area.Radius), AreaColor, "RTS Area Fire");
                 ReportRingSize(map, area);

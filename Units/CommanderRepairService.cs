@@ -32,6 +32,8 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
 
     private const float StandbySweepSeconds = 2f;
 
+    private const float StarterBuilderSeconds = 60f;
+
     /// <summary>How far from its post a standby repair vehicle goes to fix something: the Repairer's
     /// own reach, so "its base" and "what it can repair" are the same ground.</summary>
     private const float StandbyRepairRangeMeters = 1000f;
@@ -716,6 +718,10 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
             }
 
             KeepOnStandby(vehicle);
+            if (human)
+            {
+                ApplyBuilderDefaults(vehicle);
+            }
 
             // One already under a player order (a depot's rally point) waits where that order ends;
             // anything else waits where it stands, unless that is a depot's doorway.
@@ -728,6 +734,33 @@ internal sealed class CommanderRepairService : ICommanderTickActive, ICommanderT
             {
                 CommanderGameAccess.TrySetDestination(unit, post);
             }
+        }
+    }
+
+    /// <summary>Once per builder, the first time the sweep sees it: the Settings defaults, which the
+    /// builder's own buttons then override.</summary>
+    private void ApplyBuilderDefaults(GroundVehicle vehicle)
+    {
+        int mode = CommanderSettings.BuilderRepairMode;
+        if (mode == 1)
+        {
+            nearestTargetUnits.Add(vehicle);
+        }
+        else if (mode == 2)
+        {
+            repairOffUnits.Add(vehicle);
+        }
+
+        if (CommanderSettings.BuilderStayAfterBuild)
+        {
+            stayAfterBuildUnits.Add(vehicle);
+        }
+
+        // ponytail: "starter" = seen in the mission's first minute, as no depot turns one out that fast;
+        // tag depot spawns in CommanderSpawnService if that ever stops holding.
+        if (Time.timeSinceLevelLoad < StarterBuilderSeconds && !CommanderSettings.StarterBuildersFollowRoads)
+        {
+            CommanderDirectPathService.ForceEnabled(vehicle);
         }
     }
 

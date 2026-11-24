@@ -72,16 +72,27 @@ internal sealed class CommanderVictoryService : ICommanderTickPersistent, IComma
 
         foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
         {
+            if (declared)
+            {
+                return;
+            }
+
             // The Leviathan's army holds bases only while it is winning; losing them all is no defeat.
-            if (hq == null || !hq.IsServer || hq.faction == null || CommanderLeviathanDeepService.IsDeep(hq))
+            if (hq == null || !hq.IsServer || hq.faction == null || CommanderLeviathanDeepService.IsDeep(hq)
+                || CommanderFactionsBridge.IsEliminated(hq))
             {
                 continue;
             }
 
-            // The Leviathan is co-op (user, 2026-11-06): the Deep wins only by taking every base and
+            // the Deep wins only by taking every base and
             // carrier the players hold, never because they are out of units for a moment.
             if (!CommanderLeviathanService.IsLeviathanMission && RanOutOfUnits(hq))
             {
+                if (KnockOut(hq, "has no fighting units left"))
+                {
+                    continue;
+                }
+
                 declared = true;
                 hq.DeclareEndGame(EndType.Defeat);
                 CommanderPlugin.Log.LogInfo(
@@ -91,6 +102,11 @@ internal sealed class CommanderVictoryService : ICommanderTickPersistent, IComma
 
             if (LostHomeBase(hq))
             {
+                if (KnockOut(hq, "has lost its starting base"))
+                {
+                    continue;
+                }
+
                 declared = true;
                 hq.DeclareEndGame(EndType.Defeat);
                 CommanderPlugin.Log.LogInfo(
@@ -105,6 +121,11 @@ internal sealed class CommanderVictoryService : ICommanderTickPersistent, IComma
             }
 
             if (!everHeldBase.Contains(hq))
+            {
+                continue;
+            }
+
+            if (KnockOut(hq, "has lost its last base"))
             {
                 continue;
             }
@@ -260,5 +281,20 @@ internal sealed class CommanderVictoryService : ICommanderTickPersistent, IComma
         int checks = (exhaustedChecks.TryGetValue(hq, out int seen) ? seen : 0) + 1;
         exhaustedChecks[hq] = checks;
         return checks >= DraftExhaustedChecks;
+    }
+
+    /// <summary>
+    /// With more than two factions a defeat is not the end: the faction leaves the match and the
+    /// rest fight on until one is left. True when this handled it (the caller moves on).
+    /// </summary>
+    private bool KnockOut(FactionHQ hq, string reason)
+    {
+        if (FactionRegistry.HQLookup.Count <= 2 || !CommanderFactionsBridge.Loaded)
+        {
+            return false;
+        }
+
+        declared = CommanderFactionsBridge.Eliminate(hq, reason);
+        return true;
     }
 }

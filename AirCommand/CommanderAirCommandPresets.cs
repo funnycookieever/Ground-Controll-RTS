@@ -233,8 +233,14 @@ internal sealed partial class CommanderAirCommandService
             }
         }
 
+        int at = presets.IndexOf(preset);
         preset.Name = name;
         SaveCustomPresets();
+        if (at >= 0)
+        {
+            MovePreset(at, at, save: true);
+        }
+
         SetStatus($"Preset renamed to \"{name}\".");
         return true;
     }
@@ -252,6 +258,51 @@ internal sealed partial class CommanderAirCommandService
         SaveCustomPresets();
         RefreshPresets();
         SetStatus($"Preset \"{name}\" deleted.");
+    }
+
+    /// <summary>Moves one row of the PRESETS list; <paramref name="save"/> keeps the whole order
+    /// for this aircraft, so it is still there next match.</summary>
+    internal void MovePreset(int from, int to, bool save)
+    {
+        AirMissionOption? option = SelectedOption;
+        if (option == null || from < 0 || from >= presets.Count || to < 0 || to >= presets.Count)
+        {
+            return;
+        }
+
+        LoadoutPreset? selected = SelectedPresetIndex >= 0 ? presets[SelectedPresetIndex] : null;
+        LoadoutPreset moved = presets[from];
+        presets.RemoveAt(from);
+        presets.Insert(to, moved);
+        SelectedPresetIndex = selected != null ? presets.IndexOf(selected) : -1;
+        if (from != to)
+        {
+            RatePresets(option);
+        }
+
+        if (!save)
+        {
+            return;
+        }
+
+        string key = GetDefinitionKey(option.Definition);
+        StringBuilder builder = new();
+        string[] lines = CommanderSettings.AirLoadoutPresetOrder.Split(PresetLineSeparator, StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].Split('\t')[0] != key)
+            {
+                builder.Append(lines[i]).Append('\n');
+            }
+        }
+
+        builder.Append(key);
+        for (int i = 0; i < presets.Count; i++)
+        {
+            builder.Append('\t').Append(presets[i].Name);
+        }
+
+        CommanderSettings.AirLoadoutPresetOrder = builder.Append('\n').ToString();
     }
 
     /// <summary>What the advanced tab is currently hanging on the pylons, in words.</summary>
@@ -400,6 +451,27 @@ internal sealed partial class CommanderAirCommandService
             && !info.gun
             && !IsStrategicStrikeWeapon(info, mount)
             && info.effectiveness.antiSurface > 0.05f;
+    }
+
+    private static int PresetRank(LoadoutPreset preset, List<string> order)
+    {
+        int at = order.FindIndex(name => string.Equals(name, preset.Name, StringComparison.OrdinalIgnoreCase));
+        return at >= 0 ? at : preset.Custom ? -1 : int.MaxValue;
+    }
+
+    private static List<string> ReadPresetOrder(string? stored, string definitionKey)
+    {
+        string[] lines = (stored ?? string.Empty).Split(PresetLineSeparator, StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            string[] parts = lines[i].Split('\t');
+            if (parts[0] == definitionKey)
+            {
+                return new List<string>(parts).GetRange(1, parts.Length - 1);
+            }
+        }
+
+        return new List<string>();
     }
 
     /// <summary>A pasted name can hold the tab and newline the config line is split on.</summary>
@@ -574,9 +646,14 @@ internal sealed partial class CommanderAirCommandService
             return;
         }
 
-        AddRolePresets(option);
-        AddStandardLoadoutPresets(option);
+        if (!CommanderSettings.AirHideBuiltInPresets)
+        {
+            AddRolePresets(option);
+            AddStandardLoadoutPresets(option);
+        }
+
         AddCustomPresets(option);
+        SortPresets(GetDefinitionKey(option.Definition));
         RatePresets(option);
 
         SelectedPresetIndex = presets.FindIndex(entry =>
@@ -770,6 +847,19 @@ internal sealed partial class CommanderAirCommandService
         }
 
         presets.Add(preset);
+    }
+
+    /// <summary>The player's dragged order wins. Anything not in it yet: a saved preset goes on top,
+    /// a built-in one to the bottom, each keeping the order it was added in.</summary>
+    private void SortPresets(string definitionKey)
+    {
+        List<string> order = ReadPresetOrder(CommanderSettings.AirLoadoutPresetOrder, definitionKey);
+        List<LoadoutPreset> added = new(presets);
+        presets.Sort((a, b) =>
+        {
+            int byRank = PresetRank(a, order).CompareTo(PresetRank(b, order));
+            return byRank != 0 ? byRank : added.IndexOf(a).CompareTo(added.IndexOf(b));
+        });
     }
 
     private void LoadCustomPresets()

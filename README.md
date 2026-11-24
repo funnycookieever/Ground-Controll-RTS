@@ -42,6 +42,10 @@ Join us on **[Discord](https://discord.gg/F5DGy9ystd)**.
 - **Enemy commander:** an AI opponent with its own economy, air force and difficulty levels.
 - **Rules your way:** unit caps, unit bans, game speed, fog of war and your own prices.
 - **Mission editor:** tick Ground Control RTS in a mission's parameters to make your own map.
+- **Ground Control Factions:** with that separate mod installed too, matches of up to ten factions.
+  The AI commander plays every faction nobody plays, each faction handed a base gets a vehicle depot
+  and a munitions bunker, a beaten faction leaves the match instead of ending it, and the unit cap is
+  shared out so eight factions field about what a duel does.
 
 ## Gallery
 

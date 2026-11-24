@@ -99,8 +99,6 @@ internal sealed partial class CommanderEconomyService
     /// deal, so a base captured later never hands out free builders.</summary>
     private readonly List<Airbase> championsBuilderBases = new();
 
-    private bool championsDealt;
-
     private bool warnedNoStartingBuilders;
 
     /// <summary>
@@ -110,6 +108,9 @@ internal sealed partial class CommanderEconomyService
     /// again, which the player saw as free builders appearing mid-match.
     /// </summary>
     private float startingBuildersDeadline = -1f;
+
+    /// <summary>Whether the Champions deal has handed out the bases yet.</summary>
+    internal bool ChampionsDealt { get; private set; }
 
     /// <summary>
     /// A standby spot moved off every depot's exit lane: beside the lane, either side, else past its
@@ -173,6 +174,17 @@ internal sealed partial class CommanderEconomyService
     {
         BuildingDefinition? tower = Encyclopedia.i?.buildings.Find(d => d != null && d.unitPrefab != null && CommanderBuildPreview.IsControlTower(d));
         return tower != null ? PlaceKitBuilding(hq, tower, anchor, out _, label) : null;
+    }
+
+    /// <summary>
+    /// A faction's starting kit at one base: a vehicle depot and a munitions bunker, unless it
+    /// already has them there. Used by Ground Control Factions for a faction dealt a bare base.
+    /// </summary>
+    internal void GiveBaseDepots(FactionHQ hq, Airbase airbase)
+    {
+        (int depots, bool bunker) = PlaceBaseDepots(
+            hq, airbase, FindBuilding(Encyclopedia.i, VehicleDepotKeys), ResolveCategoryDefinition(BuildingType.AMMO, preferDearest: true), 1);
+        CommanderPlugin.Log.LogInfo($"Factions: {hq.faction.factionName} given {depots} depot(s){(bunker ? " and a munitions bunker" : string.Empty)}.");
     }
 
     /// <summary>
@@ -259,6 +271,18 @@ internal sealed partial class CommanderEconomyService
             : $"Champions: {localHq.faction.factionName} gets the radar station {best / 1000f:0.#} km from its base, {enemyHq.faction.factionName} the other {enemy}.");
     }
 
+    /// <summary>
+    /// A base a third faction (Ground Control Factions) holds. Its deal waits on this one only so
+    /// long, so a player slow to pick a side met it first, and "every other base is the enemy's"
+    /// then took the extras' only bases off them.
+    /// </summary>
+    private static bool IsThirdFactions(Airbase airbase, FactionHQ localHq, FactionHQ enemyHq)
+    {
+        return airbase.CurrentHQ != null
+            && !ReferenceEquals(airbase.CurrentHQ, localHq)
+            && !ReferenceEquals(airbase.CurrentHQ, enemyHq);
+    }
+
     private static bool IsRadarStation(Building building)
     {
         return building != null && building.definition is BuildingDefinition { buildingType: BuildingType.RDR };
@@ -266,7 +290,7 @@ internal sealed partial class CommanderEconomyService
 
     private void TickChampionsStart()
     {
-        if (championsDealt
+        if (ChampionsDealt
             || !CommanderEnemyCommanderService.IsChampionsMission
             || FactionRegistry.airbaseLookup == null
             || Encyclopedia.i?.buildings == null)
@@ -274,10 +298,10 @@ internal sealed partial class CommanderEconomyService
             return;
         }
 
-        // The Leviathan event opens at sea with every base neutral (user, 2026-11-05): nothing to deal.
+        // The Leviathan event opens at sea with every base neutral: nothing to deal.
         if (CommanderLeviathanService.IsLeviathanMission)
         {
-            championsDealt = true;
+            ChampionsDealt = true;
             return;
         }
 
@@ -313,6 +337,7 @@ internal sealed partial class CommanderEconomyService
                 && airbase.center != null
                 && airbase.SavedAirbase?.Capturable == true
                 && System.Array.IndexOf(startBases, airbase.SavedAirbase.UniqueName) >= 0
+                && !IsThirdFactions(airbase, localHq, enemyHq)
                 && !enemyHq.TryGetNearestDepot(airbase.center.position, airbase.GetRadius(), out _))
             {
                 pool.Add(airbase);
@@ -324,7 +349,7 @@ internal sealed partial class CommanderEconomyService
             return;
         }
 
-        championsDealt = true;
+        ChampionsDealt = true;
         Airbase home = pool[SiteDice.Next(pool.Count)];
 
         // Dealt first, taken second, so the player never holds nothing in between and the victory
@@ -350,7 +375,7 @@ internal sealed partial class CommanderEconomyService
             {
                 leftOut.Add($"{CommanderCaptureService.GetAirbaseLabel(airbase)} ({(airbase.disabled ? "disabled" : "not capturable")})");
             }
-            else if (!ReferenceEquals(airbase.CurrentHQ, enemyHq))
+            else if (!ReferenceEquals(airbase.CurrentHQ, enemyHq) && !IsThirdFactions(airbase, localHq, enemyHq))
             {
                 airbase.capture.ForceCapture(enemyHq);
             }
@@ -405,27 +430,33 @@ internal sealed partial class CommanderEconomyService
             }
 
             championsBuilderBases.Add(airbase);
-            GlobalPosition anchor = airbase.center.GlobalPosition();
-            int have = CountBuildingsNear(enemyHq, BuildingType.DEP, anchor, Mathf.Max(airbase.GetRadius(), BaseSiteMaxMeters));
-            for (int i = have; depot != null && i < EnemyStartingDepotsPerBase; i++)
-            {
-                if (TryPlaceKitBuilding(enemyHq, depot, anchor, out _))
-                {
-                    built++;
-                }
-            }
-
-            if (bunker != null
-                && !HasBuildingNear(enemyHq, BuildingType.AMMO, anchor, SupplyCoverageMeters)
-                && TryPlaceKitBuilding(enemyHq, bunker, anchor, out _))
-            {
-                bunkers++;
-            }
+            (int depots, bool hasBunker) = PlaceBaseDepots(enemyHq, airbase, depot, bunker, EnemyStartingDepotsPerBase);
+            built += depots;
+            bunkers += hasBunker ? 1 : 0;
         }
 
         CommanderPlugin.Log.LogInfo(
             $"Champions: {enemyHq.faction.factionName} given {built} depots and {bunkers} munitions bunkers "
                 + $"across {championsBuilderBases.Count} bases.");
+    }
+
+    private (int Depots, bool Bunker) PlaceBaseDepots(FactionHQ hq, Airbase airbase, BuildingDefinition? depot, BuildingDefinition? bunker, int depotsWanted)
+    {
+        GlobalPosition anchor = airbase.center.GlobalPosition();
+        int built = 0;
+        int have = CountBuildingsNear(hq, BuildingType.DEP, anchor, Mathf.Max(airbase.GetRadius(), BaseSiteMaxMeters));
+        for (int i = have; depot != null && i < depotsWanted; i++)
+        {
+            if (TryPlaceKitBuilding(hq, depot, anchor, out _))
+            {
+                built++;
+            }
+        }
+
+        bool bunkerPlaced = bunker != null
+            && !HasBuildingNear(hq, BuildingType.AMMO, anchor, SupplyCoverageMeters)
+            && TryPlaceKitBuilding(hq, bunker, anchor, out _);
+        return (built, bunkerPlaced);
     }
 
     /// <summary>
@@ -474,7 +505,7 @@ internal sealed partial class CommanderEconomyService
         }
 
         bool champions = CommanderEnemyCommanderService.IsChampionsMission;
-        if (champions && !championsDealt)
+        if (champions && !ChampionsDealt)
         {
             return;
         }

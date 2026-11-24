@@ -1033,16 +1033,27 @@ internal sealed partial class CommanderEconomyService
         return taken;
     }
 
-    private void ReviewEnemies()
+    /// <summary>
+    /// The round's AI factions, reviewed one a heavy frame by <see cref="ReviewNextEnemy"/>. All of
+    /// them in one frame was a 170-220 ms stall every review with seven AI factions (Ground Control Factions).
+    /// </summary>
+    private void QueueEnemyReviews()
     {
         FactionHQ? localHq = CommanderGameAccess.GetLocalHq();
         foreach (FactionHQ hq in FactionRegistry.GetAllHQs())
         {
-            if (!CommanderEnemyCommanderService.IsAiFaction(hq, localHq))
+            if (CommanderEnemyCommanderService.IsAiFaction(hq, localHq))
             {
-                continue;
+                enemyReviewQueue.Enqueue(hq);
             }
+        }
+    }
 
+    private void ReviewNextEnemy()
+    {
+        FactionHQ hq = enemyReviewQueue.Dequeue();
+        if (hq != null && CommanderEnemyCommanderService.IsAiFaction(hq, CommanderGameAccess.GetLocalHq()))
+        {
             ReviewEnemy(hq);
         }
     }

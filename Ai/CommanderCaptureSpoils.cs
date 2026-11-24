@@ -136,9 +136,22 @@ internal static class CommanderCaptureSpoils
     {
         foreach (Building building in airbase.buildings)
         {
-            if (building != null)
+            if (building == null)
             {
-                building.NetworkHQ = null;
+                continue;
+            }
+
+            // Building.HQChanged files a damaged building with its new HQ's repair list, and with
+            // no HQ that is a null reference: it threw out of the capture postfix and left the
+            // base's hand-over half done. So a damaged one leaves the old HQ's list by hand.
+            FactionHQ? old = building.NetworkHQ;
+            bool damaged = building.needsRepair;
+            building.needsRepair = false;
+            building.NetworkHQ = null;
+            building.needsRepair = damaged;
+            if (damaged && old != null)
+            {
+                old.NotifyRepaired(building);
             }
         }
     }

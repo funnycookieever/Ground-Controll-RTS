@@ -9,13 +9,16 @@ namespace GroundControlRts;
 
 internal sealed partial class CommanderSupplyHeliService
 {
-    /// <summary>False for a cargo run launched with "Follow roads" off.</summary>
+    /// <summary>A cargo run uses its own "Follow roads" flag; every other helicopter the AIR window's
+    /// FOLLOW ROADS setting (host's, off by default).</summary>
     internal static bool FollowsRoads(Aircraft aircraft)
     {
-        return Instance == null
-            || !Instance.assignedMissions.TryGetValue(aircraft, out CargoMission mission)
-            || !mission.TargetOverrideActive
-            || mission.FollowRoads;
+        if (Instance != null && Instance.assignedMissions.TryGetValue(aircraft, out CargoMission mission))
+        {
+            return !mission.TargetOverrideActive || mission.FollowRoads;
+        }
+
+        return CommanderSettings.HeloMissionFollowRoads;
     }
 
     private static int GetSamSiteId(string supportSummary)

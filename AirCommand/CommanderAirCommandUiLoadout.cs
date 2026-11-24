@@ -11,6 +11,10 @@ internal sealed partial class CommanderAirCommandUi
 {
     private const string PresetNameField = "gc.presetName";
     private const float PresetRowButtonWidth = 66f;
+    private const float PresetGripWidth = 26f;
+
+    /// <summary>The PRESETS row being dragged by its grip, or -1.</summary>
+    private int dragPresetIndex = -1;
 
     /// <summary>Which saved preset's DELETE is armed, and until when. Two clicks, because a saved
     /// preset is gone for good.</summary>
@@ -43,18 +47,31 @@ internal sealed partial class CommanderAirCommandUi
         Rect view = new(panel.x + 8f, panel.y + 8f, panel.width - 16f, panel.height - 16f);
         float innerHeight = Mathf.Max(view.height, (service.Presets.Count * 52f) + 4f);
         presetScroll = GUI.BeginScrollView(view, presetScroll, new Rect(0f, 0f, view.width - 18f, innerHeight));
+        Event current = Event.current;
         for (int i = 0; i < service.Presets.Count; i++)
         {
             bool custom = service.Presets[i].Custom;
-            float buttonWidth = view.width - 24f - (custom ? 2f * PresetRowButtonWidth : 0f);
+            float buttonWidth = view.width - 24f - PresetGripWidth - (custom ? 2f * PresetRowButtonWidth : 0f);
             if (ReferenceEquals(service.Presets[i], renamingPreset))
             {
-                DrawRenameRow(2f + (i * 52f), buttonWidth);
+                DrawRenameRow(2f + (i * 52f), buttonWidth + PresetGripWidth);
                 continue;
             }
 
+            Rect grip = new(2f, 2f + (i * 52f), PresetGripWidth - 4f, 46f);
+            GUI.Box(
+                grip,
+                new GUIContent("=", "Drag up or down to reorder. The order is kept for this aircraft."),
+                i == dragPresetIndex ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button);
+            if (current.type == EventType.MouseDown && current.button == 0 && grip.Contains(current.mousePosition))
+            {
+                dragPresetIndex = i;
+                deletePresetArmed = -1;
+                current.Use();
+            }
+
             if (GUI.Button(
-                new Rect(2f, 2f + (i * 52f), buttonWidth, 46f),
+                new Rect(PresetGripWidth + 2f, 2f + (i * 52f), buttonWidth, 46f),
                 service.GetPresetLabel(i),
                 i == service.SelectedPresetIndex ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
             {
@@ -67,7 +84,7 @@ internal sealed partial class CommanderAirCommandUi
             }
 
             if (CommanderUiTheme.FitWordButton(
-                new Rect(buttonWidth + 6f, 2f + (i * 52f), 60f, 46f),
+                new Rect(PresetGripWidth + buttonWidth + 6f, 2f + (i * 52f), 60f, 46f),
                 new GUIContent("RENAME", "Give this saved preset your own name."),
                 CommanderUiTheme.Button))
             {
@@ -76,7 +93,7 @@ internal sealed partial class CommanderAirCommandUi
 
             bool armed = deletePresetArmed == i && Time.unscaledTime <= deletePresetArmedUntil;
             if (CommanderUiTheme.FitWordButton(
-                new Rect(buttonWidth + PresetRowButtonWidth + 6f, 2f + (i * 52f), 60f, 46f),
+                new Rect(PresetGripWidth + buttonWidth + PresetRowButtonWidth + 6f, 2f + (i * 52f), 60f, 46f),
                 new GUIContent(armed ? "SURE?" : "DELETE", "Deletes this saved preset for good. Click twice."),
                 CommanderUiTheme.DangerButton))
             {
@@ -91,6 +108,39 @@ internal sealed partial class CommanderAirCommandUi
                 deletePresetArmed = i;
                 deletePresetArmedUntil = Time.unscaledTime + 4f;
             }
+        }
+
+        // The row follows the mouse while held; letting go keeps the order for good.
+        if (dragPresetIndex >= service.Presets.Count)
+        {
+            dragPresetIndex = -1;
+        }
+        else if (dragPresetIndex >= 0 && current.type is EventType.MouseDrag or EventType.Repaint)
+        {
+            // Held near the top or bottom edge, the list scrolls under the row (as does the wheel),
+            // so a row goes from the top to the bottom in one drag. Repaint runs every frame, so
+            // holding still at the edge keeps scrolling.
+            float inView = current.mousePosition.y - presetScroll.y;
+            float edge = inView < 40f ? inView - 40f : inView > view.height - 40f ? inView - (view.height - 40f) : 0f;
+            if (current.type == EventType.Repaint && edge != 0f)
+            {
+                float maxScroll = Mathf.Max(innerHeight - view.height, 0f);
+                presetScroll.y = Mathf.Clamp(presetScroll.y + (Mathf.Clamp(edge, -40f, 40f) * 15f * Time.unscaledDeltaTime), 0f, maxScroll);
+            }
+
+            int target = Mathf.Clamp(Mathf.FloorToInt((current.mousePosition.y - 2f) / 52f), 0, service.Presets.Count - 1);
+            service.MovePreset(dragPresetIndex, target, save: false);
+            dragPresetIndex = target;
+            if (current.type == EventType.MouseDrag)
+            {
+                current.Use();
+            }
+        }
+        else if (dragPresetIndex >= 0 && current.rawType == EventType.MouseUp)
+        {
+            service.MovePreset(dragPresetIndex, dragPresetIndex, save: true);
+            dragPresetIndex = -1;
+            current.Use();
         }
 
         GUI.EndScrollView();
@@ -205,7 +255,7 @@ internal sealed partial class CommanderAirCommandUi
         {
             // Saving lands on the PRESETS tab with the new preset selected, or the saved one that
             // already matches, so naming it happens there, on the same row RENAME uses. What it
-            // carries is the name until one is typed. A new preset is last, so bring its row in.
+            // carries is the name until one is typed. Bring the new preset's row in.
             service.TrySaveCurrentAsPreset(service.DescribeCurrentLoadout().ToUpperInvariant(), out string _);
             if (!service.AdvancedLoadout && service.SelectedPresetIndex >= 0)
             {

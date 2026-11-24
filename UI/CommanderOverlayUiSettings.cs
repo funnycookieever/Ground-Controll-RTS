@@ -59,6 +59,7 @@ internal sealed partial class CommanderOverlayUi
             "stop_order" => CommanderSettings.StopOrder,
             "same_type" => CommanderSettings.SelectSameType,
             "cycle_idle" => CommanderSettings.CycleIdleUnit,
+            "cycle_base" => CommanderSettings.CycleBase,
             "ping" => CommanderSettings.PingKey,
             "clear_selection" => CommanderSettings.ClearSelection,
             "night_vision" => CommanderSettings.ToggleNightVision,
@@ -102,6 +103,7 @@ internal sealed partial class CommanderOverlayUi
             case "stop_order": CommanderSettings.StopOrder = shortcut; break;
             case "same_type": CommanderSettings.SelectSameType = shortcut; break;
             case "cycle_idle": CommanderSettings.CycleIdleUnit = shortcut; break;
+            case "cycle_base": CommanderSettings.CycleBase = shortcut; break;
             case "ping": CommanderSettings.PingKey = shortcut; break;
             case "clear_selection": CommanderSettings.ClearSelection = shortcut; break;
             case "night_vision": CommanderSettings.ToggleNightVision = shortcut; break;
@@ -122,6 +124,7 @@ internal sealed partial class CommanderOverlayUi
         CommanderSettings.CameraFreeLook = new KeyboardShortcut(KeyCode.Mouse2);
         CommanderSettings.CameraBoost = new KeyboardShortcut(KeyCode.LeftShift);
         CommanderSettings.CameraCenterFollow = new KeyboardShortcut(KeyCode.Space);
+        CommanderSettings.CycleBase = new KeyboardShortcut(KeyCode.Home);
         CommanderSettings.OpenBuild = new KeyboardShortcut(KeyCode.B);
         CommanderSettings.OpenGroundUnits = new KeyboardShortcut(KeyCode.G);
         CommanderSettings.OpenAirCommand = new KeyboardShortcut(KeyCode.F);
@@ -191,29 +194,39 @@ internal sealed partial class CommanderOverlayUi
         DrawSettingsTab(new Rect(12f + (tabWidth * 5f), y, tabWidth, 32f), "VISUALS", 5);
         y += 44f;
 
-        if (settingsTab == 0)
-        {
-            DrawGameplaySettings(y);
-        }
-        else if (settingsTab == 1)
-        {
-            DrawUiSettings(y);
-        }
-        else if (settingsTab == 3)
+        // Shortcuts scrolls itself; the rest scroll here so a short or scaled-down window still reaches the bottom.
+        if (settingsTab == 3)
         {
             DrawShortcutList(y);
         }
-        else if (settingsTab == 4)
-        {
-            DrawCameraSettings(y);
-        }
-        else if (settingsTab == 5)
-        {
-            DrawVisualSettings(y);
-        }
         else
         {
-            DrawControlSettings(y);
+            float contentHeight = settingsTab switch { 0 => 674f, 1 => 416f, 4 => 734f, 5 => 602f, _ => 732f };
+            Rect view = new(0f, y, settingsWindowRect.width, settingsWindowRect.height - y - 8f);
+            Rect inner = new(0f, 0f, settingsWindowRect.width - 20f, contentHeight);
+            settingsScroll = GUI.BeginScrollView(view, settingsScroll, inner);
+            if (settingsTab == 0)
+            {
+                DrawGameplaySettings(0f);
+            }
+            else if (settingsTab == 1)
+            {
+                DrawUiSettings(0f);
+            }
+            else if (settingsTab == 4)
+            {
+                DrawCameraSettings(0f);
+            }
+            else if (settingsTab == 5)
+            {
+                DrawVisualSettings(0f);
+            }
+            else
+            {
+                DrawControlBindings(0f);
+            }
+
+            GUI.EndScrollView();
         }
 
         CommanderUiTheme.DrawTooltip(new Rect(0f, 0f, settingsWindowRect.width, settingsWindowRect.height));
@@ -295,6 +308,7 @@ internal sealed partial class CommanderOverlayUi
         if (GUI.Button(rect, label, settingsTab == tab ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
         {
             settingsTab = tab;
+            settingsScroll = Vector2.zero;
             bindingCapture = null;
         }
     }
@@ -302,7 +316,7 @@ internal sealed partial class CommanderOverlayUi
     private void DrawGameplaySettings(float y)
     {
         float commandY = y;
-        GUI.Box(new Rect(12f, commandY, settingsWindowRect.width - 24f, 350f), string.Empty, CommanderUiTheme.Panel);
+        GUI.Box(new Rect(12f, commandY, settingsWindowRect.width - 24f, 418f), string.Empty, CommanderUiTheme.Panel);
         GUI.Label(new Rect(24f, commandY + 10f, settingsWindowRect.width - 48f, 22f), "COMMAND", CommanderUiTheme.Header);
         CommanderSettings.GroupHotkeys = CommanderUiTheme.Check(
             new Rect(24f, commandY + 40f, settingsWindowRect.width - 48f, 30f),
@@ -349,9 +363,19 @@ internal sealed partial class CommanderOverlayUi
             CommanderSettings.CombatAlerts,
             "Alert when units are attacked or lost",
             CommanderUiTheme.Toggle);
+        CommanderSettings.AirHideBuiltInPresets = CommanderUiTheme.Check(
+            new Rect(24f, commandY + 346f, settingsWindowRect.width - 48f, 30f),
+            CommanderSettings.AirHideBuiltInPresets,
+            "Air Command: show only my saved loadout presets (all aircraft)",
+            CommanderUiTheme.Toggle);
+        CommanderSettings.RightClickRally = CommanderUiTheme.Check(
+            new Rect(24f, commandY + 380f, settingsWindowRect.width - 48f, 30f),
+            CommanderSettings.RightClickRally,
+            "Right click sets the rally point of a selected depot or naval dock",
+            CommanderUiTheme.Toggle);
 
         // The rest change the match itself, not how it is played, so they get a panel that says so.
-        float rulesY = commandY + 358f;
+        float rulesY = commandY + 426f;
         GUI.Box(new Rect(12f, rulesY, settingsWindowRect.width - 24f, 118f), string.Empty, CommanderUiTheme.Panel);
         GUI.Label(new Rect(24f, rulesY + 10f, settingsWindowRect.width - 48f, 22f), "MATCH RULES", CommanderUiTheme.Header);
 
@@ -401,6 +425,35 @@ internal sealed partial class CommanderOverlayUi
             new Rect(24f, rulesY + 78f, settingsWindowRect.width - 48f, 30f),
             CommanderSettings.EnemyCommanderHumanTeams,
             "Enemy commander also runs teams with players on them (they fly for it)",
+            CommanderUiTheme.Toggle);
+
+        // Defaults for builders, the ones a mission starts with included; each builder's own buttons override them.
+        float buildersY = rulesY + 126f;
+        float half = (settingsWindowRect.width - 56f) / 2f;
+        GUI.Box(new Rect(12f, buildersY, settingsWindowRect.width - 24f, 118f), string.Empty, CommanderUiTheme.Panel);
+        GUI.Label(new Rect(24f, buildersY + 10f, settingsWindowRect.width - 48f, 22f), "BUILDERS (HOST'S SETTING COUNTS)", CommanderUiTheme.Header);
+        int repairMode = CommanderSettings.BuilderRepairMode;
+        if (GUI.Button(
+            new Rect(24f, buildersY + 40f, half, 32f),
+            repairMode == 2 ? "REPAIR: OFF" : repairMode == 1 ? "REPAIR: NEAREST" : "REPAIR: PRIORITY",
+            repairMode != 0 ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+        {
+            CommanderSettings.BuilderRepairMode = (repairMode + 1) % 3;
+        }
+
+        bool stay = CommanderSettings.BuilderStayAfterBuild;
+        if (GUI.Button(
+            new Rect(32f + half, buildersY + 40f, half, 32f),
+            stay ? "AFTER BUILD: STAY" : "AFTER BUILD: RETURN",
+            stay ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+        {
+            CommanderSettings.BuilderStayAfterBuild = !stay;
+        }
+
+        CommanderSettings.StarterBuildersFollowRoads = CommanderUiTheme.Check(
+            new Rect(24f, buildersY + 78f, settingsWindowRect.width - 48f, 30f),
+            CommanderSettings.StarterBuildersFollowRoads,
+            "Starting builders follow roads (depot builders use their depot's ROADS switch)",
             CommanderUiTheme.Toggle);
     }
 
@@ -677,19 +730,9 @@ internal sealed partial class CommanderOverlayUi
         CommanderSettings.ShowBuildUi = showBuildUi;
     }
 
-    // Scrolls so the reset buttons stay reachable when the window is clamped to a short screen.
-    private void DrawControlSettings(float top)
-    {
-        Rect view = new(0f, top, settingsWindowRect.width, settingsWindowRect.height - top - 8f);
-        Rect inner = new(0f, 0f, settingsWindowRect.width - 20f, 700f);
-        controlsScroll = GUI.BeginScrollView(view, controlsScroll, inner);
-        DrawControlBindings(0f);
-        GUI.EndScrollView();
-    }
-
     private void DrawControlBindings(float y)
     {
-        GUI.Box(new Rect(12f, y, settingsWindowRect.width - 24f, 696f), string.Empty, CommanderUiTheme.Panel);
+        GUI.Box(new Rect(12f, y, settingsWindowRect.width - 24f, 728f), string.Empty, CommanderUiTheme.Panel);
         GUI.Label(
             new Rect(24f, y + 8f, settingsWindowRect.width - 48f, 32f),
             "Bindings are active only in RTS mode. Click one, then press a keyboard or mouse button. Escape cancels.",
@@ -770,14 +813,19 @@ internal sealed partial class CommanderOverlayUi
         DrawBinding(new Rect(left, rowY + 544f, columnWidth, 30f), "Speed 1x", "speed_1", "Host only.");
         DrawBinding(new Rect(right, rowY + 512f, columnWidth, 30f), "Speed 2x", "speed_2", "Host only.");
         DrawBinding(new Rect(right, rowY + 544f, columnWidth, 30f), "Speed 4x", "speed_4", "Host only.");
+        DrawBinding(
+            new Rect(left, rowY + 576f, columnWidth, 30f),
+            "Next base",
+            "cycle_base",
+            "Moves the camera to the next airbase you own. Keep pressing to go round them all.");
 
-        if (GUI.Button(new Rect(left, y + 652f, columnWidth, 32f), "RESET CAMERA + WINDOWS", CommanderUiTheme.Button))
+        if (GUI.Button(new Rect(left, y + 684f, columnWidth, 32f), "RESET CAMERA + WINDOWS", CommanderUiTheme.Button))
         {
             ResetCameraBindings();
             bindingCapture = null;
         }
 
-        if (GUI.Button(new Rect(right, y + 652f, columnWidth, 32f), "RESET ACTIONS", CommanderUiTheme.Button))
+        if (GUI.Button(new Rect(right, y + 684f, columnWidth, 32f), "RESET ACTIONS", CommanderUiTheme.Button))
         {
             ResetActionBindings();
             bindingCapture = null;

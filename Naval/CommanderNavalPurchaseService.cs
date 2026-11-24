@@ -394,6 +394,13 @@ internal sealed class CommanderNavalPurchaseService : ICommanderActivate, IComma
         return true;
     }
 
+    /// <summary>Right click with the dock selected: sets its rally point at once, no arming.</summary>
+    internal void SetRallyPoint(GlobalPosition point)
+    {
+        rallySelectionDock = SelectedDock;
+        CompleteRallySelection(point);
+    }
+
     internal bool TryGetSelectedRallyPoint(out GlobalPosition rally)
     {
         Unit? dock = SelectedDock;

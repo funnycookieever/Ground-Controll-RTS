@@ -74,17 +74,32 @@ internal static class CommanderHeloRoadRoute
             return;
         }
 
-        while (route.Next < route.Points.Count - 1 && Horizontal(here, route.Points[route.Next]) < ReachedMeters)
+        while (route.Next < route.Points.Count && Horizontal(here, route.Points[route.Next]) < ReachedMeters)
         {
             route.Next++;
         }
 
         // Past the end of the road, or nearer the destination than the road is: the last leg is direct.
-        GlobalPosition point = route.Points[route.Next];
-        if (Horizontal(point, destination) < direct)
+        if (route.Next >= route.Points.Count)
         {
-            destination = point;
+            return;
         }
+
+        GlobalPosition point = route.Points[route.Next];
+        float toPoint = Horizontal(here, point);
+        if (Horizontal(point, destination) >= direct || toPoint < 1f)
+        {
+            return;
+        }
+
+        // AutoAim sets collective from the distance to its destination (full power only while
+        // speed * 20 m is under it), so a road point 500 m ahead held it near 25 m/s. Aim along the
+        // road, at the real distance.
+        float scale = direct / toPoint;
+        destination = new GlobalPosition(
+            here.x + ((point.x - here.x) * scale),
+            destination.y,
+            here.z + ((point.z - here.z) * scale));
     }
 
     internal static void Forget(Aircraft aircraft)

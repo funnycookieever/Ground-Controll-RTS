@@ -28,7 +28,7 @@ unit is 10 or more, and tier 1 if it is less.
 | `MSV LADS` | 200 | Auto | Laser point defence. |
 | `HLT Radar Truck`, `MSV Radar` | 100 | 2 | Mobile radar with the range of a radar station. |
 | `HLT Fire Control`, `MSV Fire Control` | 30 | 3 | Aims radar-guided launchers parked nearby. |
-| `M12 Jackknife` | 20 | Auto | Repairs vehicles and builds every construction site. |
+| `M12 Jackknife` | 20 | Auto | Repairs vehicles and builds every construction site. Drives 1.5x its stock top speed. |
 | Munitions and fuel trucks | 20 | 2 | Resupply. |
 
 Any other AFV costs the game's own value plus 1.
@@ -69,12 +69,12 @@ Bought in the NAVAL window. The naval dock's level decides which ships you can b
 | Ship | Price |
 | --- | --- |
 | `Surf Class Patrol Boat` | 50 |
-| `Shard Class Corvette` | 625 |
-| `Argus Class Frigate` | 1000 |
-| `Cursor Class LFD` | 1050 |
-| `Dynamo Class Destroyer` | 1600 |
-| `Annex Class Carrier` | 3750 |
-| `Hyperion Class Carrier` | 3750 |
+| `Shard Class Corvette` | 937.5 |
+| `Argus Class Frigate` | 1500 |
+| `Cursor Class LFD` | 1575 |
+| `Dynamo Class Destroyer` | 2400 |
+| `Annex Class Carrier` | 5625 |
+| `Hyperion Class Carrier` | 5625 |
 
 ## Buildings
 

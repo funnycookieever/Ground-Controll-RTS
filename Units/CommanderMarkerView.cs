@@ -35,8 +35,8 @@ internal sealed class CommanderMarkerView
         friendly = CommanderGameAccess.IsFriendlyUnit(unit, localHq);
         trackingInfo = friendly ? null : localHq.GetTrackingData(unit.persistentID);
         sprite = friendly ? CommanderGameAccess.GetFriendlySprite(unit) : CommanderGameAccess.GetHostileSprite(unit);
-        color = friendly ? CommanderGameAccess.GetFriendlyColor() : CommanderGameAccess.GetHostileColor();
-        selectedColor = friendly ? CommanderGameAccess.GetSelectedFriendlyColor() : CommanderGameAccess.GetSelectedHostileColor();
+        color = friendly ? CommanderGameAccess.GetFriendlyColor() : CommanderGameAccess.GetHostileColor(unit);
+        selectedColor = friendly ? CommanderGameAccess.GetSelectedFriendlyColor() : CommanderGameAccess.GetSelectedHostileColor(unit);
         depotMarker = CommanderGameAccess.HasFriendlyDepot(unit, unit.NetworkHQ);
         baseScale = CommanderGameAccess.GetBaseScale(unit) * (depotMarker ? 1.25f : 1f);
 

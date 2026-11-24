@@ -81,6 +81,10 @@ internal static class CommanderShortcutReference
             Key(CommanderSettings.CycleIdleUnit),
             "Next friendly ground or naval unit with no RTS order."));
         buffer.Add(new Entry(
+            "Jump to your next base",
+            Key(CommanderSettings.CycleBase),
+            "Press again to cycle the camera through every airbase you own."));
+        buffer.Add(new Entry(
             "Ping for your team",
             Key(CommanderSettings.PingKey),
             "On a spot or a unit, in the 3D view or on the map. Teammates see it in the cockpit too."));
@@ -137,9 +141,9 @@ internal static class CommanderShortcutReference
             Key(CommanderSettings.SecondaryAction),
             "Backs out of an armed build, supply or area placement. Escape also works."));
         buffer.Add(new Entry(
-            "Set depot rally point",
+            "Set depot / dock rally point",
             Key(CommanderSettings.SecondaryAction),
-            "With only a vehicle depot selected, in the world or on the map."));
+            CommanderSettings.RightClickRally ? "With only a vehicle depot or naval dock selected, in the world or on the map." : "Disabled in Settings > Gameplay."));
 
         buffer.Add(Entry.Section("WINDOWS"));
         buffer.Add(new Entry("Build", Key(CommanderSettings.OpenBuild), "Opens or closes BUILD."));

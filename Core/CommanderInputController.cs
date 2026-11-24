@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
+using UnityEngine;
 
 namespace GroundControlRts;
 
@@ -25,6 +26,7 @@ internal sealed class CommanderInputController
     private string lastEatenBy = string.Empty;
     private int eatenInARow;
     private Rect eatenSpan;
+    private Airbase? lastCycledBase;
 
     internal CommanderInputController(
         CommanderOverlayUi overlayUi,
@@ -61,7 +63,7 @@ internal sealed class CommanderInputController
         unit = null!;
         Vector2 mousePosition = Input.mousePosition;
         float bestDistance = float.PositiveInfinity;
-        System.Collections.Generic.List<MapIcon> icons = dynamicMap.mapIcons;
+        List<MapIcon> icons = dynamicMap.mapIcons;
         for (int i = 0; i < icons.Count; i++)
         {
             if (icons[i] is not UnitMapIcon unitIcon
@@ -162,11 +164,20 @@ internal sealed class CommanderInputController
 
         if (CommanderShortcutInput.IsDown(CommanderSettings.SecondaryAction))
         {
-            if (IsOnlyDepotSelected())
+            bool depot = IsOnlyDepotSelected();
+            CommanderNavalPurchaseService? dock = depot ? null : GetOnlySelectedDock();
+            if (CommanderSettings.RightClickRally && (depot || dock != null))
             {
                 if (overMap ? dynamicMap!.TryGetCursorCoordinates(out GlobalPosition rallyPoint) : CommanderGameAccess.TryRaycastWorldPosition(mousePosition, out rallyPoint))
                 {
-                    spawnService.SetRallyPoint(rallyPoint);
+                    if (depot)
+                    {
+                        spawnService.SetRallyPoint(rallyPoint);
+                    }
+                    else
+                    {
+                        dock!.SetRallyPoint(rallyPoint);
+                    }
                 }
             }
             else if (overMap)
@@ -264,11 +275,45 @@ internal sealed class CommanderInputController
             CommanderCameraFollowService.Instance?.CenterOnSelection();
         }
 
+        if (CommanderShortcutInput.IsDown(CommanderSettings.CycleBase))
+        {
+            JumpToNextOwnedBase();
+        }
+
         overlayUi.HandleWindowHotkeys();
         if (!wasTyping)
         {
             overlayUi.HandleBuyKey();
         }
+    }
+
+    /// <summary>Steps the camera to the airbase after the last one this key visited, wrapping round.</summary>
+    private void JumpToNextOwnedBase()
+    {
+        FactionHQ? hq = CommanderGameAccess.GetLocalHq();
+        List<Airbase> bases = new();
+        if (hq != null)
+        {
+            foreach (Airbase airbase in hq.GetAirbases())
+            {
+                if (airbase != null && !airbase.disabled)
+                {
+                    bases.Add(airbase);
+                }
+            }
+        }
+
+        if (bases.Count == 0)
+        {
+            CommanderNotice.Fail("You own no airbase.");
+            return;
+        }
+
+        // IndexOf is -1 for none or a base lost since, so the cycle restarts at the first.
+        Airbase next = bases[(bases.IndexOf(lastCycledBase!) + 1) % bases.Count];
+        lastCycledBase = next;
+        CommanderCameraFollowService.Instance?.Deactivate();
+        tacticalMapService.JumpCameraToPosition(next.center.position.ToGlobalPosition());
     }
 
     /// <summary>The cancel key reads the cursor the way the build order does: map point over the map, else the world.</summary>
@@ -289,6 +334,17 @@ internal sealed class CommanderInputController
         return spawnService.SelectedDepot != null
             && selectionService.SelectedUnits.Count == 1
             && selectionService.SelectedUnits[0] is not (GroundVehicle or Ship);
+    }
+
+    /// <summary>The naval service when its tracked dock is the whole selection, else null.</summary>
+    private CommanderNavalPurchaseService? GetOnlySelectedDock()
+    {
+        CommanderNavalPurchaseService? naval = CommanderNavalPurchaseService.Instance;
+        return naval?.SelectedDock != null
+            && selectionService.SelectedUnits.Count == 1
+            && ReferenceEquals(selectionService.SelectedUnits[0], naval.SelectedDock)
+            ? naval
+            : null;
     }
 
     private bool IsPlacementArmed()

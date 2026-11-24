@@ -10,19 +10,11 @@ internal static class CommanderCameraPatches
     [HarmonyPatch(typeof(CameraStateManager), nameof(CameraStateManager.SetFollowingUnit))]
     internal static class CommanderCameraFollowingPatch
     {
+        // Following a unit puts the game in its orbit camera (right-drag look, no RTS controls), which
+        // the RTS camera never switches back from. In RTS mode only a null (back to free) gets through.
         private static bool Prefix(Unit unit)
         {
-            if (CommanderPlugin.Instance?.IsCommanderModeActive != true || !DynamicMap.mapMaximized)
-            {
-                return true;
-            }
-
-            if (CommanderTacticalMapService.Instance?.SuppressMapFollow == true)
-            {
-                return false;
-            }
-
-            return !CommanderGameAccess.ShouldAllowCommanderSelection(unit, CommanderGameAccess.GetLocalHq());
+            return CommanderPlugin.Instance?.IsCommanderModeActive != true || unit == null;
         }
     }
 

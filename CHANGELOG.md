@@ -1,10 +1,29 @@
 ﻿# Changelog
 
-## Unreleased
+## 1.0.0.4
+
+### Added
+
+- Works with Ground Control Factions, a separate mod for up to ten factions in one match: the AI commander plays every extra faction, each faction it hands a base gets a vehicle depot and a munitions bunker, and the match goes on until one faction is left standing.
+- Air Command loadout presets can be dragged into your own order by the grip on the left of each row, and the order is kept for each aircraft.
+- New setting: Air Command can show only your own saved loadout presets.
+- New key: Home moves the camera to the next airbase you own, press again to go round them all.
+- New Builders settings (Settings > Gameplay): the repair mode and stay-or-return after a build that every new builder starts with, the ones a mission starts with included, and whether those starting builders follow roads. Builders from a depot follow its ROADS switch. The host's settings count.
+- The AIR window has a Follow roads option for helicopters on combat missions. Off by default, and the host's setting counts.
 
 ### Changed
 
+- The M12 Jackknife drives 1.5 times faster.
+- Ships above the patrol boat cost half as much again: Shard Class Corvette 937.5 (was 625), Argus Class Frigate 1500 (was 1000), Cursor Class LFD 1575 (was 1050), Dynamo Class Destroyer 2400 (was 1600), Annex and Hyperion Class Carriers 5625 (was 3750).
+
 - The Leviathan's health bar text is larger, outlined and in the game's HUD font, so its numbers are easy to tell apart.
+
+### Fixed
+
+- Helicopters following a road no longer crawl along it at low speed.
+- A launcher given an attack order no longer draws an area fire ring on the map.
+- Capturing a base with damaged buildings no longer leaves the hand-over half done.
+
 
 ## 1.0.0.3
 

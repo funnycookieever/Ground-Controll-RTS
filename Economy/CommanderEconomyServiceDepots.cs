@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using HarmonyLib;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
@@ -44,6 +45,15 @@ internal sealed partial class CommanderEconomyService
 
     /// <summary>Depot level per definition, for the vehicles the balance pass placed by hand.</summary>
     private static readonly Dictionary<VehicleDefinition, int> TierOverrides = new();
+
+    private static readonly AccessTools.FieldRef<GroundVehicle, float> TopSpeedOnroad =
+        AccessTools.FieldRefAccess<GroundVehicle, float>("topSpeedOnroad");
+
+    private static readonly AccessTools.FieldRef<GroundVehicle, float> TopSpeedOffroad =
+        AccessTools.FieldRefAccess<GroundVehicle, float>("topSpeedOffroad");
+
+    /// <summary>Prefabs already sped up by <see cref="SpeedUp"/>.</summary>
+    private static readonly HashSet<GroundVehicle> SpedUpPrefabs = new();
 
     /// <summary>Cleared on every scene change, so a mission load re-applies (and re-logs) them.</summary>
     private static bool pricesApplied;
@@ -183,6 +193,7 @@ internal sealed partial class CommanderEconomyService
         Reprice(definitions, "AFV8 Mobile Air Defense", 15f, 0);
         Reprice(definitions, "LCV25 AA", 1.5f, 0);
         Reprice(definitions, "M12 Jackknife", 20f, 0);
+        SpeedUp(definitions, "M12 Jackknife", 1.5f);
         Reprice(definitions, "AeroSentry SPAAG", 100f, 3);
         Reprice(definitions, "MSV LADS", 200f, 0);
         Reprice(definitions, "MSV CRAM", 100f, 0);
@@ -209,12 +220,12 @@ internal sealed partial class CommanderEconomyService
 
         // Ships are gated by dock level, not depot tier.
         Reprice(ships, "Surf Class Patrol Boat", 50f, 0);
-        Reprice(ships, "Shard Class Corvette", 625f, 0);
-        Reprice(ships, "Argus Class Frigate", 1000f, 0);
-        Reprice(ships, "Cursor Class LFD", 1050f, 0);
-        Reprice(ships, "Dynamo Class Destroyer", 1600f, 0);
-        Reprice(ships, "Annex Class Carrier", 3750f, 0);
-        Reprice(ships, "Hyperion Class Carrier", 3750f, 0);
+        Reprice(ships, "Shard Class Corvette", 937.5f, 0);
+        Reprice(ships, "Argus Class Frigate", 1500f, 0);
+        Reprice(ships, "Cursor Class LFD", 1575f, 0);
+        Reprice(ships, "Dynamo Class Destroyer", 2400f, 0);
+        Reprice(ships, "Annex Class Carrier", 5625f, 0);
+        Reprice(ships, "Hyperion Class Carrier", 5625f, 0);
 
         // The player's profile goes on last, over the mod's prices, and covers whatever the game
         // has loaded, modded aircraft included: it is keyed on the same unit names.
@@ -326,6 +337,26 @@ internal sealed partial class CommanderEconomyService
                 {
                     definition.value = price;
                 }
+            }
+        }
+    }
+
+    /// <summary>Scales the prefab's top speeds once per process: prefabs outlive missions, and
+    /// this runs every time prices are applied. Units spawned afterwards drive at the new speed.</summary>
+    private static void SpeedUp(UnitDefinition[] definitions, string unitName, float factor)
+    {
+        foreach (UnitDefinition definition in definitions)
+        {
+            if (definition == null || definition.unitName != unitName || definition.unitPrefab == null)
+            {
+                continue;
+            }
+
+            GroundVehicle vehicle = definition.unitPrefab.GetComponent<GroundVehicle>();
+            if (vehicle != null && SpedUpPrefabs.Add(vehicle))
+            {
+                TopSpeedOnroad(vehicle) *= factor;
+                TopSpeedOffroad(vehicle) *= factor;
             }
         }
     }

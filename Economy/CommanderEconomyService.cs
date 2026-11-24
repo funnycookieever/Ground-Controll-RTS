@@ -166,6 +166,9 @@ internal sealed partial class CommanderEconomyService
 
     private readonly CommanderBuildPreview preview = new();
 
+    // The AI factions still to review this round, one a heavy frame (ReviewEnemies).
+    private readonly Queue<FactionHQ> enemyReviewQueue = new();
+
     private BuildingDefinition? factoryDefinition;
     private bool factoryDefinitionResolved;
     private BuildingDefinition? lightFactoryDefinition;
@@ -338,7 +341,7 @@ internal sealed partial class CommanderEconomyService
         builderProgress.Clear();
         builderResting.Clear();
         queuedBuildOrders.Clear();
-        championsDealt = false;
+        ChampionsDealt = false;
         startingBuildersGiven.Clear();
         championsBuildersDealt.Clear();
         warnedNoStartingBuilders = false;
@@ -360,6 +363,7 @@ internal sealed partial class CommanderEconomyService
         StatusText = string.Empty;
         nextIncomeAt = CommanderScheduler.Stagger("economy.income", IncomeIntervalSeconds);
         nextEnemyReviewAt = 0f;
+        enemyReviewQueue.Clear();
     }
 
     /// <summary>
@@ -1893,9 +1897,15 @@ internal sealed partial class CommanderEconomyService
         if (!draft
             && CommanderEnemyCommanderService.EffectiveMode != CommanderEnemyCommanderService.ModeOff
             && CommanderGameAccess.GetLocalHq() != null
-            && CommanderScheduler.IsDueHeavy(ref nextEnemyReviewAt, reviewInterval))
+            && enemyReviewQueue.Count == 0
+            && CommanderScheduler.IsDue(ref nextEnemyReviewAt, reviewInterval))
         {
-            ReviewEnemies();
+            QueueEnemyReviews();
+        }
+
+        if (enemyReviewQueue.Count > 0 && Time.timeScale > 0f && CommanderScheduler.TryClaimHeavyFrame())
+        {
+            ReviewNextEnemy();
         }
 
         TickConstruction();

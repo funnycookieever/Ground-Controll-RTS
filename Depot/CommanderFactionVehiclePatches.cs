@@ -25,14 +25,14 @@ internal static class CommanderFactionVehiclePatches
     /// <summary>
     /// The mission's free air force: a random airframe out of the reserve every tick, up to
     /// <c>AIAircraftLimit</c>. With friendly AI off the local side launches only what the commander does.
-    /// On GC missions <see cref="CommanderFreeAiPilots"/> flies them instead, free of stock, and
-    /// friendly AI off does not stop them: the lobby slider is the switch for those.
+    /// On GC missions <see cref="CommanderFreeAiPilots"/> flies them instead, free of stock. Friendly
+    /// AI off stops those too: AI Supplies (GC Factions) sets every side's limit, the player's included.
     /// </summary>
     [HarmonyPatch(typeof(FactionHQ), "DeployAIAircraft")]
     [HarmonyPrefix]
     private static bool DeployAIAircraftPrefix(FactionHQ __instance)
     {
-        if ((!CommanderEnemyCommanderService.IsDuelMission && CommanderFactionVehicleService.IsFriendlyAiOff(__instance))
+        if (CommanderFactionVehicleService.IsFriendlyAiOff(__instance)
             || CommanderUnitCap.IsFull(__instance, tellPlayer: false)
             || CommanderUnitCap.IsAircraftFull(__instance))
         {

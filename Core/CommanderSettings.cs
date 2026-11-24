@@ -191,6 +191,18 @@ internal static class CommanderSettings
 
     internal static bool GuardOrders { get => Get("Gameplay", "GuardOrders", true); set => Set("Gameplay", "GuardOrders", value); }
 
+    // One switch for both: right click with only a vehicle depot or a naval dock selected sets its rally point.
+    internal static bool RightClickRally { get => Get("Gameplay", "RightClickRally", true); set => Set("Gameplay", "RightClickRally", value); }
+
+    // New builders' repair mode (0 priority, 1 nearest, 2 off) and whether they wait where a build finishes.
+    // The host's values count: its game drives every builder.
+    internal static int BuilderRepairMode { get => Get("Gameplay", "BuilderRepairMode", 0); set => Set("Gameplay", "BuilderRepairMode", value); }
+
+    internal static bool BuilderStayAfterBuild { get => Get("Gameplay", "BuilderStayAfterBuild", false); set => Set("Gameplay", "BuilderStayAfterBuild", value); }
+
+    // Only the builders a mission starts with; a depot's ones take that depot's ROADS switch.
+    internal static bool StarterBuildersFollowRoads { get => Get("Gameplay", "StarterBuildersFollowRoads", true); set => Set("Gameplay", "StarterBuildersFollowRoads", value); }
+
     internal static bool AutoRetreatDamaged { get => Get("Gameplay", "AutoRetreatDamaged", false); set => Set("Gameplay", "AutoRetreatDamaged", value); }
 
     internal static float RetreatConditionPercent { get => Get("Gameplay", "RetreatConditionPercent", 40f); set => Set("Gameplay", "RetreatConditionPercent", value); }
@@ -430,6 +442,8 @@ internal static class CommanderSettings
 
     internal static KeyboardShortcut CycleIdleUnit { get => GetShortcut("CycleIdleUnit", KeyCode.Period, "Select and jump to the next friendly ground/naval unit with no RTS order."); set => Set("Keybinds", "CycleIdleUnit", value); }
 
+    internal static KeyboardShortcut CycleBase { get => GetShortcut("CycleBase", KeyCode.Home, "Move the camera to the next airbase your faction owns; press again to cycle through them all."); set => Set("Keybinds", "CycleBase", value); }
+
     internal static KeyboardShortcut CameraFreeLook { get => GetShortcut("CameraFreeLook", KeyCode.Mouse2, "Hold while moving the mouse to look around in RTS mode."); set => Set("Keybinds", "CameraFreeLook", value); }
 
     internal static KeyboardShortcut CameraBoost { get => GetShortcut("CameraBoost", KeyCode.LeftShift, "Hold for faster RTS camera movement."); set => Set("Keybinds", "CameraBoost", value); }
@@ -443,6 +457,8 @@ internal static class CommanderSettings
     internal static float AirTargetAltitude { get => Get("Air Command", "TargetAltitude", 0f); set => Set("Air Command", "TargetAltitude", value); }
 
     internal static bool AirGuardTargetOrdnance { get => Get("Air Command", "AirGuardTargetOrdnance", false); set => Set("Air Command", "AirGuardTargetOrdnance", value); }
+
+    internal static bool HeloMissionFollowRoads { get => Get("Air Command", "HeloMissionFollowRoads", false); set => Set("Air Command", "HeloMissionFollowRoads", value); }
 
     internal static bool AirIncludeInternalCannons { get => Get("Air Command", "IncludeInternalCannons", true); set => Set("Air Command", "IncludeInternalCannons", value); }
 
@@ -462,6 +478,14 @@ internal static class CommanderSettings
     /// one weapon jsonKey per hardpoint, all tab separated. A flat string because BepInEx config has
     /// no list type and a preset list is not worth a save file of its own.</summary>
     internal static string AirLoadoutPresets { get => Get("Air Command", "SavedLoadoutPresets", string.Empty); set => Set("Air Command", "SavedLoadoutPresets", value); }
+
+    /// <summary>The player's own order of the PRESETS list, one aircraft per line: prefab name,
+    /// then preset names top to bottom, tab separated.</summary>
+    internal static string AirLoadoutPresetOrder { get => Get("Air Command", "LoadoutPresetOrder", string.Empty); set => Set("Air Command", "LoadoutPresetOrder", value); }
+
+    /// <summary>Hides the generated role and base-game standard presets, so the PRESETS list holds
+    /// only the player's own saved loadouts.</summary>
+    internal static bool AirHideBuiltInPresets { get => Get("Air Command", "HideBuiltInPresets", false); set => Set("Air Command", "HideBuiltInPresets", value); }
 
     // The last army this player took into a Ground Control Draft battle, for the draft screen's LOAD LAST.
     internal static string DraftLastPicks { get => Get("Draft", "LastPicks", string.Empty); set => Set("Draft", "LastPicks", value); }
@@ -507,6 +531,7 @@ internal static class CommanderSettings
         _ = StopOrder;
         _ = SelectSameType;
         _ = CycleIdleUnit;
+        _ = CycleBase;
         _ = PingKey;
         _ = AutoFollowSelection;
         _ = GroupHotkeys;
@@ -519,6 +544,10 @@ internal static class CommanderSettings
         _ = AttackMoveIntoRange;
         _ = AttackMoveRoutes;
         _ = GuardOrders;
+        _ = RightClickRally;
+        _ = BuilderRepairMode;
+        _ = BuilderStayAfterBuild;
+        _ = StarterBuildersFollowRoads;
         _ = AutoRetreatDamaged;
         _ = RetreatConditionPercent;
         _ = WaypointHoldSeconds;
@@ -594,6 +623,8 @@ internal static class CommanderSettings
         _ = StrikeRadiusKm;
         _ = HybridRadiusKm;
         _ = AirLoadoutPresets;
+        _ = AirLoadoutPresetOrder;
+        _ = AirHideBuiltInPresets;
         _ = DraftLastPicks;
     }
 

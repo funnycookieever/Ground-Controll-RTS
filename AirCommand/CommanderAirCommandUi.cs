@@ -665,6 +665,15 @@ internal sealed partial class CommanderAirCommandUi
             y += 38f;
         }
 
+        GUI.enabled = oldEnabled && interactive;
+        CommanderSettings.HeloMissionFollowRoads = CommanderUiTheme.Check(
+            new Rect(12f, y, width, 32f),
+            CommanderSettings.HeloMissionFollowRoads,
+            new GUIContent("FOLLOW ROADS | helicopters on long legs", "Off: helicopters on combat missions fly the straight line. Transport runs use the TRANSPORT window's own option."),
+            CommanderUiTheme.Toggle);
+        GUI.enabled = oldEnabled;
+        y += 38f;
+
         return y;
     }
 
